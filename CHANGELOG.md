@@ -1,3 +1,9 @@
+### GitHub Actions packaging-order hotfix
+
+- Run strict repository verification before CUDA setup creates `cuda_download`.
+- Use a stable `BetaSeedFinder-Windows-NVIDIA` artifact name.
+- Document where the generated `BetaSeedFinder.exe` is downloaded.
+
 ### Windows Java build hotfix
 
 - Fixed `javac` argument-file paths on Windows by using absolute forward-slash paths.
