@@ -37,22 +37,28 @@ jobs:
           method: network
           sub-packages: '["nvcc", "visual_studio_integration"]'
 
-      - name: Show compiler environment
-        shell: pwsh
-        run: |
-          nvcc --version
-          Write-Host "CUDA_PATH=$env:CUDA_PATH"
-          Get-Command cl.exe -ErrorAction SilentlyContinue | Format-List
-
       - name: Verify shared source
         shell: pwsh
         run: |
           ./scripts/Verify-NvidiaCudaSource.ps1
           ./scripts/Check-DualGpuSource.ps1
 
-      - name: Build NVIDIA worker
-        shell: pwsh
-        run: ./gpu_p20_benchmark/Build-NvidiaBackend.ps1 -ProjectRoot "$env:GITHUB_WORKSPACE"
+      - name: Initialize MSVC and build NVIDIA worker
+        shell: cmd
+        run: |
+          if not exist "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" (
+            echo Visual Studio 2022 developer environment was not found.
+            exit /b 1
+          )
+          call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -no_logo -arch=x64 -host_arch=x64
+          if errorlevel 1 exit /b 1
+          where cl.exe
+          if errorlevel 1 exit /b 1
+          nvcc --version
+          if errorlevel 1 exit /b 1
+          echo CUDA_PATH=%CUDA_PATH%
+          powershell -NoProfile -ExecutionPolicy Bypass -File ".\gpu_p20_benchmark\Build-NvidiaBackend.ps1" -ProjectRoot "%GITHUB_WORKSPACE%"
+          if errorlevel 1 exit /b 1
 
       - name: Create no-install tester
         shell: pwsh
