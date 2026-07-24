@@ -1,0 +1,71 @@
+name: Build NVIDIA Windows worker
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "gpu_p20_benchmark/native/**"
+      - "gpu_p20_benchmark/Build-NvidiaBackend.ps1"
+      - "scripts/Create-NvidiaTester.ps1"
+      - "scripts/Run-NvidiaTester.ps1"
+      - "scripts/Verify-NvidiaCudaSource.ps1"
+      - "NVIDIA_NO_INSTALL_TEST.bat"
+      - ".github/workflows/build-nvidia-windows.yml"
+  pull_request:
+    paths:
+      - "gpu_p20_benchmark/native/**"
+      - "gpu_p20_benchmark/Build-NvidiaBackend.ps1"
+      - "scripts/**"
+      - ".github/workflows/build-nvidia-windows.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows-nvidia:
+    runs-on: windows-2022
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Install CUDA Toolkit 12.8.1
+        uses: Jimver/cuda-toolkit@v0.2.35
+        with:
+          cuda: "12.8.1"
+          method: network
+          sub-packages: '["nvcc", "visual_studio_integration"]'
+
+      - name: Show compiler environment
+        shell: pwsh
+        run: |
+          nvcc --version
+          Write-Host "CUDA_PATH=$env:CUDA_PATH"
+          Get-Command cl.exe -ErrorAction SilentlyContinue | Format-List
+
+      - name: Verify shared source
+        shell: pwsh
+        run: |
+          ./scripts/Verify-NvidiaCudaSource.ps1
+          ./scripts/Check-DualGpuSource.ps1
+
+      - name: Build NVIDIA worker
+        shell: pwsh
+        run: ./gpu_p20_benchmark/Build-NvidiaBackend.ps1 -ProjectRoot "$env:GITHUB_WORKSPACE"
+
+      - name: Create no-install tester
+        shell: pwsh
+        run: ./scripts/Create-NvidiaTester.ps1 -ProjectRoot "$env:GITHUB_WORKSPACE"
+
+      - name: Upload Windows worker and tester
+        uses: actions/upload-artifact@v4
+        with:
+          name: BetaSeedFinder-NVIDIA-Windows-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            backend/nvidia/gpu_p20_benchmark.exe
+            backend/nvidia/nvidia_build.log
+            release/BetaSeedFinder-NVIDIA-NoInstall-Tester.zip
+            release/SHA256SUMS.txt

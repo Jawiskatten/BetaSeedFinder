@@ -1,0 +1,49 @@
+name: Publish curated source prerelease
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  publish-source:
+    runs-on: windows-2022
+    timeout-minutes: 25
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v7
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Verify tag and source
+        shell: pwsh
+        run: |
+          $version = (Get-Content VERSION.txt -Raw).Trim()
+          if ($env:GITHUB_REF_NAME -ne $version) {
+            throw "Tag $env:GITHUB_REF_NAME does not match VERSION.txt ($version)."
+          }
+          ./scripts/Verify-GithubSource.ps1 -ProjectRoot "$env:GITHUB_WORKSPACE" -Strict
+          New-Item -ItemType Directory -Force -Path bin | Out-Null
+          $sources = Get-ChildItem src -Recurse -Filter *.java | ForEach-Object { $_.FullName }
+          & javac -encoding UTF-8 -d bin @sources
+          if ($LASTEXITCODE -ne 0) { throw "javac failed." }
+
+      - name: Create curated source archive
+        shell: pwsh
+        run: ./scripts/Create-GithubSource.ps1 -ProjectRoot "$env:GITHUB_WORKSPACE" -Destination "$env:GITHUB_WORKSPACE/release"
+
+      - name: Publish GitHub prerelease
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = (Get-Content VERSION.txt -Raw).Trim()
+          $assets = Get-ChildItem release -File | ForEach-Object { $_.FullName }
+          gh release create $version @assets --prerelease --generate-notes --title "BetaSeedFinder $version"
