@@ -9,10 +9,15 @@ import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 
 final class GpuBackendLocator {
-    private static final Path CONFIG_PATH = Path.of("config", "gpu_backend.properties");
-    private static final Path AMD_EXE = Path.of("backend", "amd", "gpu_p20_benchmark.exe");
-    private static final Path NVIDIA_EXE = Path.of("backend", "nvidia", "gpu_p20_benchmark.exe");
-    private static final Path LEGACY_EXE = Path.of("gpu_p20_benchmark", "build", "gpu_p20_benchmark.exe");
+    private static final String WORKER_NAME = "BetaSeedFinderWorker.exe";
+    private static final Path CONFIG_PATH = AppPaths.configRoot().resolve("gpu_backend.properties");
+    private static final Path AMD_EXE = AppPaths.resolve("backend", "amd", WORKER_NAME);
+    private static final Path NVIDIA_EXE = AppPaths.resolve("backend", "nvidia", WORKER_NAME);
+
+    // Development/backward-compatibility fallbacks. These are not included in releases.
+    private static final Path LEGACY_AMD_EXE = AppPaths.resolve("backend", "amd", "gpu_p20_benchmark.exe");
+    private static final Path LEGACY_NVIDIA_EXE = AppPaths.resolve("backend", "nvidia", "gpu_p20_benchmark.exe");
+    private static final Path LEGACY_BUILD_EXE = AppPaths.resolve("gpu_p20_benchmark", "build", "gpu_p20_benchmark.exe");
 
     private GpuBackendLocator() {
     }
@@ -22,53 +27,40 @@ final class GpuBackendLocator {
         List<Path> tried = new ArrayList<>();
 
         if (requested == GpuBackendKind.AMD) {
-            ResolvedBackend amd = tryExisting(GpuBackendKind.AMD, AMD_EXE, tried);
-            if (amd != null) return amd;
-
-            // Existing BetaSeedFinder installs keep the validated AMD worker in
-            // gpu_p20_benchmark\build. Treat that as the AMD fallback so the
-            // forced AMD launcher remains compatible after installing P57/P58.
-            ResolvedBackend legacyAmd = tryExisting(GpuBackendKind.AMD, LEGACY_EXE, tried);
-            if (legacyAmd != null) return legacyAmd;
-
+            ResolvedBackend result = firstExisting(GpuBackendKind.AMD, tried, AMD_EXE, LEGACY_AMD_EXE, LEGACY_BUILD_EXE);
+            if (result != null) return result;
             throw missingRequestedBackend(GpuBackendKind.AMD, tried);
         }
         if (requested == GpuBackendKind.NVIDIA) {
-            return resolveSingle(GpuBackendKind.NVIDIA, NVIDIA_EXE, tried);
+            ResolvedBackend result = firstExisting(GpuBackendKind.NVIDIA, tried, NVIDIA_EXE, LEGACY_NVIDIA_EXE);
+            if (result != null) return result;
+            throw missingRequestedBackend(GpuBackendKind.NVIDIA, tried);
         }
         if (requested == GpuBackendKind.LEGACY) {
-            return resolveSingle(GpuBackendKind.LEGACY, LEGACY_EXE, tried);
+            return resolveSingle(GpuBackendKind.LEGACY, LEGACY_BUILD_EXE, tried);
         }
 
         GpuBackendKind detected = detectInstalledVendor();
-        ResolvedBackend auto;
         if (detected == GpuBackendKind.NVIDIA) {
-            auto = tryExisting(GpuBackendKind.NVIDIA, NVIDIA_EXE, tried);
-            if (auto != null) return auto;
-            auto = tryExisting(GpuBackendKind.AMD, AMD_EXE, tried);
-            if (auto != null) return auto;
+            ResolvedBackend result = firstExisting(GpuBackendKind.NVIDIA, tried, NVIDIA_EXE, LEGACY_NVIDIA_EXE);
+            if (result != null) return result;
+            result = firstExisting(GpuBackendKind.AMD, tried, AMD_EXE, LEGACY_AMD_EXE);
+            if (result != null) return result;
         } else {
-            auto = tryExisting(GpuBackendKind.AMD, AMD_EXE, tried);
-            if (auto != null) return auto;
-            auto = tryExisting(GpuBackendKind.NVIDIA, NVIDIA_EXE, tried);
-            if (auto != null) return auto;
+            ResolvedBackend result = firstExisting(GpuBackendKind.AMD, tried, AMD_EXE, LEGACY_AMD_EXE, LEGACY_BUILD_EXE);
+            if (result != null) return result;
+            result = firstExisting(GpuBackendKind.NVIDIA, tried, NVIDIA_EXE, LEGACY_NVIDIA_EXE);
+            if (result != null) return result;
         }
-        auto = tryExisting(GpuBackendKind.LEGACY, LEGACY_EXE, tried);
-        if (auto != null) return auto;
 
         StringBuilder message = new StringBuilder();
-        message.append("No supported GPU worker executable was found.\n");
-        message.append("Checked:\n");
+        message.append("No supported GPU worker was found.\nChecked:\n");
         for (Path path : tried) {
-            message.append("  - ").append(path.toAbsolutePath().normalize()).append('\n');
+            message.append("  - ").append(path).append('\n');
         }
-        message.append("\nChoose a backend by either:\n");
-        message.append("  • placing an AMD worker at backend\\amd\\gpu_p20_benchmark.exe\n");
-        message.append("  • placing an NVIDIA worker at backend\\nvidia\\gpu_p20_benchmark.exe\n");
-        message.append("  • or keeping the legacy worker at gpu_p20_benchmark\\build\\gpu_p20_benchmark.exe\n");
+        message.append("\nDownload the correct Windows release or place BetaSeedFinderWorker.exe in backend\\amd or backend\\nvidia.");
         throw new IOException(message.toString().trim());
     }
-
 
     static GpuBackendKind detectInstalledVendor() {
         String forcedName = System.getenv("BSF_GPU_NAME");
@@ -145,6 +137,18 @@ final class GpuBackendLocator {
         }
     }
 
+    private static ResolvedBackend firstExisting(
+            GpuBackendKind kind,
+            List<Path> tried,
+            Path... candidates
+    ) {
+        for (Path path : candidates) {
+            ResolvedBackend found = tryExisting(kind, path, tried);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
     private static IOException missingRequestedBackend(GpuBackendKind kind, List<Path> tried) {
         StringBuilder message = new StringBuilder();
         message.append("Requested GPU backend ").append(kind.displayName()).append(" was not found.\nChecked:\n");
@@ -156,16 +160,13 @@ final class GpuBackendLocator {
 
     private static ResolvedBackend resolveSingle(GpuBackendKind kind, Path path, List<Path> tried) throws IOException {
         ResolvedBackend found = tryExisting(kind, path, tried);
-        if (found != null) {
-            return found;
-        }
-        throw new IOException("Requested GPU backend " + kind.displayName() + " was not found at "
-                + path.toAbsolutePath().normalize());
+        if (found != null) return found;
+        throw new IOException("Requested GPU backend " + kind.displayName() + " was not found at " + path);
     }
 
     private static ResolvedBackend tryExisting(GpuBackendKind kind, Path path, List<Path> tried) {
         Path absolute = path.toAbsolutePath().normalize();
-        tried.add(absolute);
+        if (!tried.contains(absolute)) tried.add(absolute);
         if (Files.isRegularFile(absolute)) {
             return new ResolvedBackend(kind, absolute);
         }

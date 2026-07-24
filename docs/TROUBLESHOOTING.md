@@ -1,35 +1,17 @@
 # Troubleshooting
 
-## Java is missing
+## No GPU worker found
 
-Install JDK 17 or newer and reopen the terminal:
+Use a release matching your GPU, or place `BetaSeedFinderWorker.exe` in `backend/amd` or `backend/nvidia`.
 
-```text
-java -version
-javac -version
-```
+## The app does not start
 
-## No worker is found
+Use the packaged `BetaSeedFinder.exe` from Releases. Source builds require JDK 17 or newer.
 
-Expected paths:
+## NVIDIA build cannot find cl.exe
 
-- `backend\amd\gpu_p20_benchmark.exe`
-- `backend\nvidia\gpu_p20_benchmark.exe`
+Install Visual Studio 2022 C++ Build Tools with the x64 C++ toolset. The build script imports the Visual Studio developer environment automatically.
 
-Use `SET_GPU_BACKEND_AUTO.bat`, `SET_GPU_BACKEND_AMD.bat`, or `SET_GPU_BACKEND_NVIDIA.bat` to change selection.
+## Results folder is not writable
 
-## `hipcc.exe` is missing
-
-Install AMD HIP SDK or set `HIP_SDK_DIR` to its installation folder.
-
-## `nvcc.exe` is missing
-
-Install CUDA Toolkit and Visual Studio C++ Build Tools, or use the GitHub Actions artifact instead of building locally.
-
-## A native exactness test fails
-
-Do not use that worker for record searching. Keep the complete validation log, GPU model, driver version, worker SHA-256, and command output.
-
-## A historical 3D preview fails
-
-Try regenerating the preview and switch to 2D. Older records may lack enough reconstruction metadata.
+Choose another output folder during first-run setup. The selected output path is stored in `config/gui.properties`.

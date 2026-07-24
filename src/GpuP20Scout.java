@@ -38,7 +38,7 @@ final class GpuP20Scout implements AutoCloseable {
         try {
             return GpuBackendLocator.resolve().path();
         } catch (IOException ignored) {
-            return Path.of("backend", "auto", "gpu_p20_benchmark.exe").toAbsolutePath().normalize();
+            return AppPaths.resolve("backend", "auto", "BetaSeedFinderWorker.exe");
         }
     }
 
@@ -60,7 +60,7 @@ final class GpuP20Scout implements AutoCloseable {
                 "stream",
                 Integer.toString(capacity)
         );
-        builder.directory(Path.of(".").toAbsolutePath().normalize().toFile());
+        builder.directory(AppPaths.appRoot().toFile());
         builder.redirectErrorStream(false);
 
         this.process = builder.start();
@@ -87,7 +87,7 @@ final class GpuP20Scout implements AutoCloseable {
         if (!Arrays.equals(MAGIC, actualMagic)) {
             destroyProcess();
             throw new IOException(
-                    "GPU P20 stream protocol mismatch. Rebuild gpu_p20_benchmark.exe with the integrated source."
+                    "GPU P20 stream protocol mismatch. Rebuild BetaSeedFinderWorker.exe with the integrated source."
             );
         }
     }

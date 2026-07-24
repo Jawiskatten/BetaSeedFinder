@@ -96,16 +96,20 @@ public final class FirstRunSetup {
     }
 
     public static String startupSummary(Path outputRoot) {
-        Path gpuExe = AppPaths.appRoot().resolve("gpu_p20_benchmark").resolve("build").resolve("gpu_p20_benchmark.exe");
-        Path marker = AppPaths.appRoot().resolve("gpu_p20_benchmark").resolve("build").resolve("P38_RELIABLE_RECORD_WORKER_OK.txt");
-        Path font = AppPaths.appRoot().resolve("assets").resolve("fonts").resolve("minecraft.ttf");
+        Path font = AppPaths.resolve("assets", "fonts", "minecraft.ttf");
         long free = outputRoot.toFile().getUsableSpace();
+        String workerStatus;
+        try {
+            GpuBackendLocator.ResolvedBackend backend = GpuBackendLocator.resolve();
+            workerStatus = backend.displayName() + " found";
+        } catch (Exception ignored) {
+            workerStatus = "Not found in this package";
+        }
         return "Java: " + System.getProperty("java.version") + "\n"
                 + "Application folder: " + AppPaths.appRoot() + "\n"
                 + "Output folder: " + outputRoot + "\n"
                 + "Free disk space: " + String.format("%.1f GB", free / (1024.0 * 1024.0 * 1024.0)) + "\n"
-                + "GPU worker: " + (Files.isRegularFile(gpuExe) ? "Found" : "Will be built on launch") + "\n"
-                + "GPU validation marker: " + (Files.isRegularFile(marker) ? "Found" : "Not created yet") + "\n"
+                + "GPU worker: " + workerStatus + "\n"
                 + "Minecraft font: " + (Files.isRegularFile(font) ? "Found" : "Fallback font will be used");
     }
 }

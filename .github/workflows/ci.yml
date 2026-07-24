@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-and-build-java:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Verify repository
+        shell: pwsh
+        run: ./scripts/verify.ps1 -ProjectRoot "$env:GITHUB_WORKSPACE" -Strict
+      - name: Build application JAR
+        shell: pwsh
+        run: ./scripts/build-java.ps1 -ProjectRoot "$env:GITHUB_WORKSPACE"

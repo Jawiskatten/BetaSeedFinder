@@ -1,7 +1,5 @@
-# Security policy
+# Security
 
-BetaSeedFinder is a local offline desktop application. It does not require an account and does not intentionally transmit run data.
+Do not publish security-sensitive reports as public issues. Contact the repository owner privately through GitHub.
 
-For a security-sensitive report, avoid posting exploit details, private paths, seeds from unpublished runs, or complete output folders in a public issue. Contact the repository owner privately through the contact method listed on the GitHub profile.
-
-Only the latest public alpha release is supported.
+This alpha application processes local files and launches bundled native workers. Download builds only from the repository's Releases or Actions pages and verify published SHA-256 checksums.

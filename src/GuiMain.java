@@ -92,7 +92,7 @@ public class GuiMain {
     private IslandRecord allTimeBestIsland;
     private int displayedAllTimeBestBlocks;
 
-    private static final String APP_VERSION = "v0.5.0-alpha.1";
+    private static final String APP_VERSION = "v0.5.0-alpha.2";
     private static final Path GUI_CONFIG_PATH = AppPaths.guiConfigPath();
 
     private static final int MEGA_BLOCKS_THRESHOLD = 30_000;
@@ -1918,7 +1918,7 @@ private void dopamineFlash() {
                 "Operating system: " + System.getProperty("os.name") + " " + System.getProperty("os.version") + "\n" +
                 "CPU workers available: " + Runtime.getRuntime().availableProcessors() + "\n" +
                 "GPU from latest run: " + gpu + "\n" +
-                "Working directory: " + Path.of("").toAbsolutePath().normalize() + "\n" +
+                "Application directory: " + AppPaths.appRoot() + "\n" +
                 "Output directory: " + output + "\n" +
                 "Free disk space: " + UiFormat.compact(free) + " bytes\n" +
                 "Latest run: " + (latest == null ? "None" : latest.dateText() + " | " + latest.friendlyStatus()) + "\n";

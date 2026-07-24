@@ -4,7 +4,7 @@ import java.nio.file.Path;
 import java.util.Properties;
 
 public final class AppPaths {
-    private static final Path APP_ROOT = Path.of("").toAbsolutePath().normalize();
+    private static final Path APP_ROOT = resolveApplicationRoot();
     private static final Path CONFIG_ROOT = APP_ROOT.resolve("config");
     private static final Path GUI_CONFIG = CONFIG_ROOT.resolve("gui.properties");
     private static volatile Path outputRoot = loadConfiguredOutputRoot();
@@ -14,6 +14,10 @@ public final class AppPaths {
 
     public static Path appRoot() {
         return APP_ROOT;
+    }
+
+    public static Path resolve(String first, String... more) {
+        return APP_ROOT.resolve(Path.of(first, more)).normalize();
     }
 
     public static Path configRoot() {
@@ -71,8 +75,33 @@ public final class AppPaths {
     public static void storeGuiProperties(Properties properties) throws IOException {
         Files.createDirectories(CONFIG_ROOT);
         try (var output = Files.newOutputStream(GUI_CONFIG)) {
-            properties.store(output, "BetaSeedFinder public GUI settings");
+            properties.store(output, "BetaSeedFinder GUI settings");
         }
+    }
+
+    private static Path resolveApplicationRoot() {
+        String explicit = System.getProperty("betaseedfinder.appRoot", "").trim();
+        if (explicit.isEmpty()) {
+            explicit = System.getenv().getOrDefault("BSF_APP_ROOT", "").trim();
+        }
+        if (!explicit.isEmpty()) {
+            try {
+                Path resolved = Path.of(explicit).toAbsolutePath().normalize();
+                // jpackage's $APPDIR points at the internal app directory. The
+                // writable application/output root is its parent directory.
+                if (resolved.getFileName() != null
+                        && resolved.getFileName().toString().equalsIgnoreCase("app")
+                        && resolved.getParent() != null
+                        && Files.isDirectory(resolved.getParent().resolve("runtime"))) {
+                    return resolved.getParent();
+                }
+                return resolved;
+            } catch (Exception ignored) {
+            }
+        }
+
+        // Source/development launches continue to use the current project folder.
+        return Path.of("").toAbsolutePath().normalize();
     }
 
     private static Path loadConfiguredOutputRoot() {

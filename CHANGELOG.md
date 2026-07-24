@@ -1,23 +1,27 @@
+### Windows Java build hotfix
+
+- Fixed `javac` argument-file paths on Windows by using absolute forward-slash paths.
+- Added `--release 17` so builds made with newer JDKs remain Java 17 compatible.
+
+### CI hotfix
+
+- Fixed the public-tree CUDA compatibility verification.
+- Install CUDA runtime development headers in the Windows NVIDIA workflow.
+- Add an explicit CUDA include path and clear missing-header diagnostic.
+- Corrected PowerShell build examples in the README.
+
 # Changelog
 
-## v0.5.0-alpha.1 — 2026-07-24
+## v0.5.0-alpha.2
 
-- Prepared the first public alpha source tree
-- Added source verification and Java compilation CI
-- Added public issue templates, pull-request guidance, support documentation, and dependency updates
-- Added a confirmation-based GitHub CLI publishing helper
-- Added a tag-driven curated source prerelease workflow
-- Updated GitHub Actions to current major versions
-- Kept NVIDIA Windows binaries explicitly prerelease-only until a real Windows GPU smoke test passes
-- Removed internal patch-number naming from public packaging and manifests
-- Integrated CUDA timing, device-annotation, and Turing shared-memory portability fixes
-- Replaced the final direct HIP runtime include with the shared CUDA/HIP compatibility header
-- Confirmed all four exactness suites and the full MEGA production pipeline on a Tesla T4
+- Replaced the root-level batch-file maze with one source build entry point: `build.ps1`.
+- Reduced the public Java tree to the 40 files required by the desktop application.
+- Moved the reachable native production source into `native/src`.
+- Added a self-contained `jpackage` release pipeline with one user-facing `BetaSeedFinder.exe` and bundled Java.
+- Renamed internal native executables to `BetaSeedFinderWorker.exe`.
+- Added clean CI and Windows NVIDIA packaging workflows.
+- Removed old P-number validation utilities, unused native experiments, duplicate launchers, backend placeholders, screenshots, optional assets, large reference datasets, and publishing scripts from the public tree.
 
-## v0.5.0-preview
+## v0.5.0-alpha.1
 
-- Added first-run setup and environment summary
-- Added configurable output directory with restart-safe switching
-- Added clearer Java and GPU-worker launch errors
-- Added portable launchers and public release foundations
-- Added the retro amber GUI and interactive 3D previews
+- Initial public alpha source release with dual-GPU source and NVIDIA CUDA validation.

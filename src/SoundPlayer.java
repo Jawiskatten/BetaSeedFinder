@@ -43,7 +43,7 @@ public class SoundPlayer {
                 continue;
             }
 
-            if (new File(path).exists()) {
+            if (AppPaths.resolve(path).toFile().exists()) {
                 playInternal(path, protectedSound);
                 return true;
             }
@@ -77,7 +77,7 @@ public class SoundPlayer {
             Clip clip = null;
 
             try {
-                File file = new File(path);
+                File file = AppPaths.resolve(path).toFile();
 
                 if (!file.exists()) {
                     System.out.println("Sound file missing: " + file.getAbsolutePath());

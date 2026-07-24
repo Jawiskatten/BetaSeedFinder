@@ -1,43 +1,20 @@
-# Local application state
-out/
-config/
-return/
-release/
-
-# Java build output
-bin/
+/build/
+/release/
+/out/
+/config/
+/return/
 *.class
-
-# Native build output
-backend/amd/*.exe
-backend/nvidia/*.exe
-backend/**/*.dll
-backend/**/*.log
-backend/**/*_results.txt
-backend/**/NVIDIA_BACKEND_VALIDATED.txt
-backend/**/AMD_BACKEND_VALIDATED.txt
-gpu_p20_benchmark/build*/
+*.jar
+*.exe
+*.dll
 *.obj
 *.o
 *.pdb
 *.lib
 *.exp
-
-# Packages, logs, generated checksums
-*.zip
 *.log
-SHA256SUMS.txt
-
-# IDE / OS
+*.zip
 .idea/
 .vscode/
-*.iml
 .DS_Store
 Thumbs.db
-
-# Local research / legacy workspaces
-old/
-OldGenerator/
-island_tail_analysis_export/
-p*work/
-BetaSeedFinder-v0.5.0-alpha-source/

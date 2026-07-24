@@ -65,7 +65,7 @@ public class MinecraftTheme {
 
         for (String path : paths) {
             try {
-                File file = new File(path);
+                File file = AppPaths.resolve(path).toFile();
                 if (file.exists()) {
                     return Font.createFont(Font.TRUETYPE_FONT, file);
                 }
