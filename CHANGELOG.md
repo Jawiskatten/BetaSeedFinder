@@ -1,3 +1,10 @@
+### Native compiler warning hotfix
+
+- Prevent Windows PowerShell 5.1 from treating harmless HIP/NVCC stderr warnings as terminating script errors.
+- Use the native compiler process exit code as the authoritative success/failure result.
+- Silence the known ignored HIP return-value warning.
+- Download NVIDIA workers only from successful `main` branch workflow runs.
+
 # Changelog
 
 ## v0.5.0-alpha.3

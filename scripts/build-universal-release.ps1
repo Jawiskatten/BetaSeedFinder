@@ -248,9 +248,10 @@ function Download-LatestNvidiaWorker(
     $json = & gh run list `
         --repo $Repository `
         --workflow windows-nvidia.yml `
+        --branch main `
         --status success `
         --limit 20 `
-        --json databaseId,createdAt
+        --json databaseId,createdAt,headBranch,headSha
 
     if ($LASTEXITCODE -ne 0) {
         throw 'Could not list successful NVIDIA workflow runs.'
@@ -297,6 +298,7 @@ function Download-LatestNvidiaWorker(
             if ($worker) {
                 Write-Host "NVIDIA artifact: $artifactName"
                 Write-Host "NVIDIA workflow run: $($run.databaseId)"
+                Write-Host "NVIDIA commit: $($run.headSha)"
                 return $worker
             }
         }

@@ -19,6 +19,38 @@ $output = Join-Path $outputDir 'BetaSeedFinderWorker.exe'
 $log = Join-Path $outputDir 'build.log'
 New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
 
+function Invoke-NativeCompiler {
+    param(
+        [Parameter(Mandatory = $true)][string]$Compiler,
+        [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [Parameter(Mandatory = $true)][string]$LogPath,
+        [Parameter(Mandatory = $true)][string]$DisplayName
+    )
+
+    Remove-Item -LiteralPath $LogPath -Force -ErrorAction SilentlyContinue
+
+    # Windows PowerShell 5.1 converts native stderr into PowerShell error
+    # records. Compilers routinely write harmless warnings to stderr, so
+    # ErrorActionPreference=Stop must be disabled only while the native
+    # compiler process runs. The real process exit code remains authoritative.
+    $previousPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        & $Compiler @Arguments 2>&1 |
+            Tee-Object -FilePath $LogPath
+        $compilerExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousPreference
+    }
+
+    if ($compilerExitCode -ne 0) {
+        throw "$DisplayName build failed with exit code $compilerExitCode. See $LogPath"
+    }
+
+    Write-Host "$DisplayName compiler exit code: 0" -ForegroundColor Green
+}
+
 function Import-VisualStudioEnvironment {
     $existingCompiler = Get-Command cl.exe -ErrorAction SilentlyContinue
     if ($existingCompiler) {
@@ -134,8 +166,11 @@ if ($Backend -eq 'NVIDIA') {
     $ptx = if ($selected -contains 'sm_75') { '75' } else { $selected[0].Substring(3) }
     $arguments += "-gencode=arch=compute_$ptx,code=compute_$ptx"
 
-    & $nvcc @arguments 2>&1 | Tee-Object -FilePath $log
-    if ($LASTEXITCODE -ne 0) { throw "NVIDIA build failed. See $log" }
+    Invoke-NativeCompiler `
+        -Compiler $nvcc `
+        -Arguments $arguments `
+        -LogPath $log `
+        -DisplayName 'NVIDIA'
 }
 else {
     Import-VisualStudioEnvironment
@@ -171,10 +206,14 @@ else {
         '--offload-arch=gfx1030','--offload-arch=gfx1031','--offload-arch=gfx1032',
         '--offload-arch=gfx1100','--offload-arch=gfx1101','--offload-arch=gfx1102',
         '--offload-arch=gfx1200','--offload-arch=gfx1201',
-        '-ffp-contract=off','-fno-fast-math','-fno-associative-math','-o',$output
+        '-ffp-contract=off','-fno-fast-math','-fno-associative-math',
+        '-Wno-unused-result','-o',$output
     )
-    & $hipcc @arguments 2>&1 | Tee-Object -FilePath $log
-    if ($LASTEXITCODE -ne 0) { throw "AMD build failed. See $log" }
+    Invoke-NativeCompiler `
+        -Compiler $hipcc `
+        -Arguments $arguments `
+        -LogPath $log `
+        -DisplayName 'AMD'
 }
 
 if (-not (Test-Path $output)) { throw "Compiler did not create $output" }
