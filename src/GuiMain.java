@@ -92,7 +92,7 @@ public class GuiMain {
     private IslandRecord allTimeBestIsland;
     private int displayedAllTimeBestBlocks;
 
-    private static final String APP_VERSION = "v0.5.0-alpha.2";
+    private static final String APP_VERSION = "v0.5.0-alpha.3";
     private static final Path GUI_CONFIG_PATH = AppPaths.guiConfigPath();
 
     private static final int MEGA_BLOCKS_THRESHOLD = 30_000;

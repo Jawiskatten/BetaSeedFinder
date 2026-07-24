@@ -1,12 +1,12 @@
-name: Build Windows NVIDIA app
+name: Build NVIDIA worker
 
 on:
   workflow_dispatch:
   push:
     paths:
-      - "src/**"
       - "native/**"
-      - "scripts/**"
+      - "scripts/build-native.ps1"
+      - "scripts/verify.ps1"
       - "VERSION.txt"
       - ".github/workflows/windows-nvidia.yml"
 
@@ -14,23 +14,17 @@ permissions:
   contents: read
 
 jobs:
-  package:
+  build-nvidia:
     runs-on: windows-2022
     timeout-minutes: 90
+
     steps:
       - name: Check out source
         uses: actions/checkout@v7
-      # Verify the checkout before setup actions create temporary installers
-      # and build files inside GITHUB_WORKSPACE.
+
       - name: Verify clean repository source
         shell: pwsh
         run: ./scripts/verify.ps1 -ProjectRoot "$env:GITHUB_WORKSPACE" -Strict
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: "17"
 
       - name: Install CUDA Toolkit 12.8.1
         uses: Jimver/cuda-toolkit@v0.2.35
@@ -47,18 +41,17 @@ jobs:
             throw "CUDA runtime header was not installed: $header"
           }
           Write-Host "CUDA runtime header: $header"
+
       - name: Build NVIDIA worker
         shell: pwsh
         run: ./scripts/build-native.ps1 -ProjectRoot "$env:GITHUB_WORKSPACE" -Backend NVIDIA
-      - name: Package self-contained Windows app
-        shell: pwsh
-        run: ./scripts/package-windows.ps1 -ProjectRoot "$env:GITHUB_WORKSPACE" -NvidiaWorker "build/native/nvidia/BetaSeedFinderWorker.exe" -OutputDirectory "release"
-      - name: Upload clean Windows package
+
+      - name: Upload internal NVIDIA worker
         uses: actions/upload-artifact@v4
         with:
-          name: BetaSeedFinder-Windows-NVIDIA
+          name: BetaSeedFinder-NVIDIA-Worker
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30
           path: |
-            release/BetaSeedFinder-*-windows-x64-nvidia.zip
-            release/SHA256SUMS.txt
+            build/native/nvidia/BetaSeedFinderWorker.exe
+            build/native/nvidia/build.log

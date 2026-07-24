@@ -2,10 +2,10 @@
 
 ## Java application
 
-Install JDK 17 or newer, then run:
+Install JDK 17 or newer:
 
 ```powershell
-.uild.ps1
+.\build.ps1
 ```
 
 The JAR is written to `build/java/BetaSeedFinder.jar`.
@@ -15,23 +15,29 @@ The JAR is written to `build/java/BetaSeedFinder.jar`.
 Install CUDA Toolkit and Visual Studio 2022 C++ Build Tools:
 
 ```powershell
-.uild.ps1 -Target NVIDIA
+.\build.ps1 -Target NVIDIA
 ```
 
 ## AMD worker
 
-Install AMD HIP SDK:
+Install AMD HIP SDK and Visual Studio 2022 C++ Build Tools:
 
 ```powershell
-.uild.ps1 -Target AMD
+.\build.ps1 -Target AMD
 ```
 
-## Self-contained Windows package
+`HIP_PATH` and `HIP_SDK_DIR` are both recognized.
 
-After one or both workers exist:
+## Package one or both local workers
 
 ```powershell
 .\scripts\package-windows.ps1
 ```
 
-The result is a ZIP containing one top-level launcher, a bundled Java runtime, and internal worker folders. No Java installation is required on the destination PC.
+For a guaranteed two-backend package:
+
+```powershell
+.\scripts\package-windows.ps1 -RequireUniversal
+```
+
+The generated ZIP contains one launcher, a bundled Java runtime, and internal backend folders.

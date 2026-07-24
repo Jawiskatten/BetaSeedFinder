@@ -11,8 +11,8 @@ $required = @(
     'src\GuiMain.java','src\GpuBackendLocator.java','src\AppPaths.java',
     'native\src\gpu_p20_benchmark.cpp','native\src\gpu_runtime_compat.hpp','native\CMakeLists.txt',
     'scripts\AppSourceFiles.txt','scripts\build-java.ps1','scripts\build-native.ps1',
-    'scripts\package-windows.ps1','scripts\verify.ps1',
-    '.github\workflows\ci.yml','.github\workflows\windows-nvidia.yml'
+    'scripts\package-windows.ps1','scripts\build-universal-release.ps1','scripts\verify.ps1',
+    'docs\RELEASING.md','.github\workflows\ci.yml','.github\workflows\windows-nvidia.yml'
 )
 foreach ($relative in $required) {
     if (-not (Test-Path (Join-Path $root $relative))) { throw "Required file missing: $relative" }
@@ -72,6 +72,23 @@ $workflowText = (Get-Content (Join-Path $root '.github\workflows\ci.yml') -Raw) 
                 (Get-Content (Join-Path $root '.github\workflows\windows-nvidia.yml') -Raw)
 if ($workflowText -match 'actions/setup-java@v6') { throw 'Invalid setup-java@v6 reference remains.' }
 if ($workflowText -notmatch 'actions/setup-java@v5') { throw 'setup-java@v5 is missing.' }
+
+$nvidiaWorkflow = Get-Content (Join-Path $root '.github\workflows\windows-nvidia.yml') -Raw
+if ($nvidiaWorkflow -notmatch 'BetaSeedFinder-NVIDIA-Worker') {
+    throw 'The internal NVIDIA worker artifact is missing.'
+}
+if ($nvidiaWorkflow -match 'windows-x64-nvidia\.zip') {
+    throw 'The workflow still publishes a misleading NVIDIA-only application package.'
+}
+
+$universalScript = Get-Content (Join-Path $root 'scripts\build-universal-release.ps1') -Raw
+if ($universalScript -notmatch 'RequireUniversal') {
+    throw 'The universal release builder does not require both GPU workers.'
+}
+if ($universalScript -notmatch 'backend\\amd\\BetaSeedFinderWorker\.exe' -or
+        $universalScript -notmatch 'backend\\nvidia\\BetaSeedFinderWorker\.exe') {
+    throw 'The universal package validation is incomplete.'
+}
 
 if ($Strict) {
     $badExtensions = @('.exe','.dll','.class','.obj','.o','.pdb','.lib','.exp','.wav','.ttf','.otf','.zip')

@@ -125,7 +125,7 @@ if ($Backend -eq 'NVIDIA') {
         '-x','cu',$nativeSource,
         '-I',$cudaInclude,
         '-O3','-std=c++17','-DBSF_NVIDIA_CUDA=1','--cudart=static',
-        '--fmad=false','--ftz=false','--prec-div=true','--prec-sqrt=true','-Xcompiler=/EHsc','-o',$output
+        '--fmad=false','--ftz=false','--prec-div=true','--prec-sqrt=true','-Xcompiler=/EHsc,/MT','-o',$output
     )
     foreach ($code in $selected) {
         $number = $code.Substring(3)
@@ -138,18 +138,25 @@ if ($Backend -eq 'NVIDIA') {
     if ($LASTEXITCODE -ne 0) { throw "NVIDIA build failed. See $log" }
 }
 else {
+    Import-VisualStudioEnvironment
+
     $hipcc = $null
-    if ($env:HIP_SDK_DIR) {
-        foreach ($name in @('hipcc.exe','hipcc.bat','hipcc')) {
-            $candidate = Join-Path $env:HIP_SDK_DIR ("bin\\" + $name)
-            if (Test-Path $candidate) { $hipcc = $candidate; break }
+    $configuredHipRoots = @($env:HIP_PATH, $env:HIP_SDK_DIR) |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+        Select-Object -Unique
+
+    foreach ($configuredRoot in $configuredHipRoots) {
+        foreach ($name in @('hipcc.exe','hipcc.bat','hipcc.bin.exe','hipcc')) {
+            $candidate = Join-Path $configuredRoot ("bin\\" + $name)
+            if (Test-Path $candidate -PathType Leaf) { $hipcc = $candidate; break }
         }
+        if ($hipcc) { break }
     }
     if (-not $hipcc) {
         $base = 'C:\Program Files\AMD\ROCm'
         if (Test-Path $base) {
             foreach ($versionDir in (Get-ChildItem $base -Directory | Sort-Object Name -Descending)) {
-                foreach ($name in @('hipcc.exe','hipcc.bat','hipcc')) {
+                foreach ($name in @('hipcc.exe','hipcc.bat','hipcc.bin.exe','hipcc')) {
                     $candidate = Join-Path $versionDir.FullName ("bin\\" + $name)
                     if (Test-Path $candidate) { $hipcc = $candidate; break }
                 }

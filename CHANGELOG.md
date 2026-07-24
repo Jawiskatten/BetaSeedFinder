@@ -1,3 +1,16 @@
+# Changelog
+
+## v0.5.0-alpha.3
+
+- Replaced the NVIDIA-only application download with one universal Windows package.
+- Include AMD and NVIDIA workers behind one `BetaSeedFinder.exe` launcher.
+- Automatically select the worker matching the installed GPU vendor.
+- GitHub Actions now publishes only the internal NVIDIA worker artifact.
+- Added a maintainer script that builds AMD locally, downloads NVIDIA from Actions, packages both, verifies the archive, and publishes it under Releases.
+- Bundle non-system native worker dependencies beside each internal worker.
+- Recognize both `HIP_PATH` and `HIP_SDK_DIR`.
+- Statically link the MSVC runtime in future NVIDIA worker builds.
+
 ### Windows MSVC environment hotfix
 
 - Replaced the fragile nested `cmd.exe` quoting used to initialize Visual Studio.
