@@ -20,25 +20,75 @@ $log = Join-Path $outputDir 'build.log'
 New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
 
 function Import-VisualStudioEnvironment {
-    if (Get-Command cl.exe -ErrorAction SilentlyContinue) { return }
+    $existingCompiler = Get-Command cl.exe -ErrorAction SilentlyContinue
+    if ($existingCompiler) {
+        Write-Host "MSVC:    $($existingCompiler.Source)"
+        return
+    }
 
     $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
-    if (-not (Test-Path $vswhere)) { throw 'Visual Studio 2022 C++ Build Tools were not found.' }
-    $installation = (& $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath).Trim()
-    if (-not $installation) { throw 'Visual Studio 2022 C++ Build Tools were not found.' }
-    $devCmd = Join-Path $installation 'Common7\Tools\VsDevCmd.bat'
-    if (-not (Test-Path $devCmd)) { throw "VsDevCmd.bat was not found: $devCmd" }
+    if (-not (Test-Path $vswhere -PathType Leaf)) {
+        throw 'Visual Studio 2022 C++ Build Tools were not found.'
+    }
 
-    $commandLine = '""{0}" -no_logo -arch=x64 -host_arch=x64 && set"' -f $devCmd
-    $environment = & cmd.exe /d /s /c $commandLine
-    if ($LASTEXITCODE -ne 0) { throw 'Visual Studio developer environment initialization failed.' }
+    $installation = (& $vswhere `
+        -latest `
+        -products * `
+        -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+        -property installationPath).Trim()
+
+    if (-not $installation) {
+        throw 'Visual Studio 2022 C++ Build Tools were not found.'
+    }
+
+    $devCmd = Join-Path $installation 'Common7\Tools\VsDevCmd.bat'
+    if (-not (Test-Path $devCmd -PathType Leaf)) {
+        throw "VsDevCmd.bat was not found: $devCmd"
+    }
+
+    # Do not embed VsDevCmd.bat inside a nested cmd.exe quoted command.
+    # A temporary command file safely handles paths containing spaces.
+    $tempCommand = Join-Path ([IO.Path]::GetTempPath()) (
+        'BetaSeedFinder-vsenv-' + [Guid]::NewGuid().ToString('N') + '.cmd'
+    )
+
+    @(
+        '@echo off'
+        ('call "{0}" -no_logo -arch=x64 -host_arch=x64 >nul' -f $devCmd)
+        'if errorlevel 1 exit /b 1'
+        'set'
+    ) | Set-Content -LiteralPath $tempCommand -Encoding ASCII
+
+    try {
+        $environment = & $tempCommand
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        Remove-Item -LiteralPath $tempCommand -Force -ErrorAction SilentlyContinue
+    }
+
+    if ($exitCode -ne 0) {
+        throw "Visual Studio developer environment initialization failed with exit code $exitCode."
+    }
+
     foreach ($line in $environment) {
+        if ($line -isnot [string]) { continue }
         $index = $line.IndexOf('=')
         if ($index -gt 0) {
-            [Environment]::SetEnvironmentVariable($line.Substring(0, $index), $line.Substring($index + 1), 'Process')
+            [Environment]::SetEnvironmentVariable(
+                $line.Substring(0, $index),
+                $line.Substring($index + 1),
+                'Process'
+            )
         }
     }
-    if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue)) { throw 'cl.exe is still unavailable after initializing Visual Studio.' }
+
+    $compiler = Get-Command cl.exe -ErrorAction SilentlyContinue
+    if (-not $compiler) {
+        throw 'cl.exe is still unavailable after initializing Visual Studio.'
+    }
+
+    Write-Host "MSVC:    $($compiler.Source)"
 }
 
 if ($Backend -eq 'NVIDIA') {

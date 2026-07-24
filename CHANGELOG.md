@@ -1,3 +1,9 @@
+### Windows MSVC environment hotfix
+
+- Replaced the fragile nested `cmd.exe` quoting used to initialize Visual Studio.
+- Initialize `VsDevCmd.bat` through a temporary command file instead.
+- Print the resolved `cl.exe` path before invoking NVCC.
+
 ### GitHub Actions packaging-order hotfix
 
 - Run strict repository verification before CUDA setup creates `cuda_download`.
