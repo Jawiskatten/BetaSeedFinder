@@ -1,90 +1,44 @@
-# BetaSeedFinder
+# League Ragebait v1
 
-GPU-accelerated Minecraft Beta 1.7.3 floating-island seed finder by **Jawiskatten**.
+A small post-game rating site for League of Legends. Public visitors can submit a verdict; only the allowlisted admin account can read or delete responses.
 
-## Download
+## Stack
 
-Normal users should open **Releases**, download:
+- Next.js
+- Supabase Postgres + Auth + RLS
+- Vercel-ready
 
-```text
-BetaSeedFinder-v0.5.0-alpha.3-windows-x64-universal.zip
+## Supabase
+
+This branch is wired to the existing Supabase project `srplqxdmquaznqjmdcwo` using its public publishable key. No secret/service-role key is included in the repository.
+
+The database migration creates:
+
+- `public.ragebait_responses`
+- `public.ragebait_admins`
+- RLS allowing public INSERT only
+- authenticated SELECT/DELETE only for allowlisted admin email
+
+The current admin allowlist contains `jawiskatten@gmail.com`.
+
+## Local run
+
+```bash
+npm install
+npm run dev
 ```
 
-Extract it and run:
+Open `http://localhost:3000` for the public form and `/admin` for the dashboard.
 
-```text
-BetaSeedFinder.exe
-```
+On `/admin`, use **FIRST TIME? CREATE ADMIN ACCOUNT** once, confirm the email if Supabase asks you to, then sign in.
 
-That single launcher automatically selects the included AMD or NVIDIA worker. Java is bundled. Users do not download anything from the Actions page and do not install the CUDA Toolkit.
+## Deploy
 
-> Alpha software: keep backups of important results before very long searches.
+Import this branch into Vercel as a Next.js project. The public Supabase URL/key have safe fallbacks in `lib/supabase.ts`, so the site will function even before adding environment variables. You can still add the values from `.env.example` in Vercel settings.
 
-## Package layout
+## Security notes
 
-```text
-BetaSeedFinder.exe
-app/
-runtime/
-backend/
-  amd/
-    BetaSeedFinderWorker.exe
-  nvidia/
-    BetaSeedFinderWorker.exe
-README.txt
-BACKENDS.txt
-LICENSE.txt
-```
-
-The backend folders are internal. Users launch only `BetaSeedFinder.exe`.
-
-## Status
-
-- AMD/HIP production path established on Radeon RX 7800 XT.
-- NVIDIA/CUDA exactness and the MEGA production pipeline passed on a Tesla T4.
-- GitHub Actions builds the internal NVIDIA worker.
-- The maintainer release script combines that worker with the locally built AMD worker into one universal Windows package.
-
-## Build from source
-
-Requirements: Windows 10/11, JDK 17+, and the SDK for the native backend being built.
-
-```powershell
-.\build.ps1
-.\build.ps1 -Target NVIDIA
-.\build.ps1 -Target AMD
-```
-
-Create a package after building one or both workers:
-
-```powershell
-.\scripts\package-windows.ps1
-```
-
-Maintainers create the final two-backend release with:
-
-```powershell
-.\scripts\build-universal-release.ps1 -Publish
-```
-
-See `docs/BUILDING.md`, `docs/RELEASING.md`, and `docs/VALIDATION.md`.
-
-## Repository layout
-
-```text
-src/                 Java desktop application
-native/src/          Shared HIP/CUDA worker source
-scripts/             Build, verification, packaging, and release commands
-docs/                Architecture, building, validation, releasing, troubleshooting
-.github/workflows/   CI and internal NVIDIA worker build
-```
-
-The repository intentionally excludes compiled binaries, output folders, local configuration, old patch files, duplicate launchers, third-party game assets, and obsolete research utilities.
-
-## Accuracy
-
-The terrain implementation is exact for the validated stages. Aggressive profiles also use empirical early gates, so exact terrain generation does not imply mathematically guaranteed recall for every profile.
-
-## License
-
-MIT. Minecraft assets are not distributed with this project.
+- Public users cannot SELECT responses through the Supabase API.
+- Admin reads are enforced by Postgres RLS, not just hidden UI.
+- There is no service-role key in browser code.
+- Add Turnstile/rate limiting before sharing the URL broadly if spam becomes a problem.
