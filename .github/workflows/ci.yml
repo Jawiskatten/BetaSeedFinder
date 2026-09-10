@@ -39,6 +39,3 @@ jobs:
 
           $mixed = (java -cp build/java/classes beta173.SpawnIslandFinder173 --seed 58222042 --max-radius 1 | Out-String)
           if ($mixed -notmatch 'status=DETACHED_MIXED_AIR_WATER') { throw "58222042 no longer classifies as DETACHED_MIXED_AIR_WATER`n$mixed" }
-      - name: Benchmark optimized spawn search
-        shell: pwsh
-        run: java -cp build/java/classes beta173.SpawnIslandFinder173 --start 0 --count 20000 --threads 2 --max-radius 1
