@@ -29,4 +29,4 @@ jobs:
         run: ./scripts/build-java.ps1 -ProjectRoot "$env:GITHUB_WORKSPACE"
       - name: Smoke-test Beta 1.7.3 spawn-island finder
         shell: pwsh
-        run: java -cp build/java/classes beta173.SpawnIslandFinder173 --start 0 --count 32 --threads 2 --max-radius 1
+        run: java -cp build/java/classes beta173.SpawnIslandFinder173 --start 0 --count 20000 --threads 2 --max-radius 1
