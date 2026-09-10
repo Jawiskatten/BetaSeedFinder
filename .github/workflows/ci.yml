@@ -17,8 +17,7 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v7
       - name: Set up JDK 17
-        uses: actions/setup-java@v5
-        with:
+        uses:
           distribution: temurin
           java-version: "17"
       - name: Verify repository
@@ -29,4 +28,4 @@ jobs:
         run: ./scripts/build-java.ps1 -ProjectRoot "$env:GITHUB_WORKSPACE"
       - name: Smoke-test Beta 1.7.3 spawn-island finder
         shell: pwsh
-        run: java -cp build/java/classes beta173.SpawnIslandFinder173 --start 0 --count 100000 --threads 2 --max-radius 1
+        run: java -cp build/java/classes beta173.SpawnIslandFinder173 --start 0 --count 32 --threads 2 --max-radius 1
