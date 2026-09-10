@@ -14,12 +14,12 @@ if (-not (Test-Path $sourcePath -PathType Leaf)) {
 }
 
 $text = [System.IO.File]::ReadAllText($sourcePath)
-if ($text.Contains('SQUARE_TARGET_PATCH_V1')) {
-    Write-Host 'Square target patch is already applied.'
+if ($text.Contains('SQUARE_TARGET_864_V2')) {
+    Write-Host 'Exact 864x864 square target patch is already applied.'
     exit 0
 }
 
-$oldProbe = @'
+$circleProbe = @'
 void makeProbePoints(
         const std::vector<int>& radii,
         std::vector<int>& dx,
@@ -52,7 +52,7 @@ void makeProbePoints(
 }
 '@
 
-$newProbe = @'
+$v1Probe = @'
 void makeProbePoints(
         const std::vector<int>& radii,
         std::vector<int>& dx,
@@ -91,12 +91,47 @@ void makeProbePoints(
 }
 '@
 
-if (-not $text.Contains($oldProbe)) {
-    throw 'Could not find circular makeProbePoints() block. Source may already differ.'
-}
-$text = $text.Replace($oldProbe, $newProbe)
+$newProbe = @'
+void makeProbePoints(
+        const std::vector<int>& radii,
+        std::vector<int>& dx,
+        std::vector<int>& dz
+) {
+    // SQUARE_TARGET_864_V2
+    // target=432 means an exact 864x864 window: offsets [-432, +431].
+    // Each scout ring r samples the perimeter of [-r, r-1]^2.
+    dx.resize(radii.size() * SEARCH_THREADS);
+    dz.resize(radii.size() * SEARCH_THREADS);
 
-$oldExact = @'
+    for (std::size_t ring = 0; ring < radii.size(); ++ring) {
+        const int r = radii[ring];
+        for (int lane = 0; lane < SEARCH_THREADS; ++lane) {
+            const int side = lane / 16;
+            const int t = lane % 16;
+            const int along = (t * (2 * r - 1)) / 15;
+            int x = 0;
+            int z = 0;
+            if (side == 0) {
+                x = -r + along; z = -r;
+            } else if (side == 1) {
+                x = r - 1; z = -r + along;
+            } else if (side == 2) {
+                x = r - 1 - along; z = r - 1;
+            } else {
+                x = -r; z = r - 1 - along;
+            }
+            dx[ring * SEARCH_THREADS + static_cast<std::size_t>(lane)] = x;
+            dz[ring * SEARCH_THREADS + static_cast<std::size_t>(lane)] = z;
+        }
+    }
+}
+'@
+
+if ($text.Contains($circleProbe)) { $text = $text.Replace($circleProbe, $newProbe) }
+elseif ($text.Contains($v1Probe)) { $text = $text.Replace($v1Probe, $newProbe) }
+else { throw 'Could not find probe generator to convert to exact 864x864 square.' }
+
+$circleExact = @'
 std::vector<ExactPoint> makeExactPoints(int target) {
     const long long r2 = static_cast<long long>(target) * target;
     std::vector<ExactPoint> points;
@@ -117,7 +152,7 @@ std::vector<ExactPoint> makeExactPoints(int target) {
 }
 '@
 
-$newExact = @'
+$v1Exact = @'
 std::vector<ExactPoint> makeExactPoints(int target) {
     // Square target: every integer X/Z offset in [-target, +target].
     // ExactPoint::d2 stores Chebyshev-radius squared so the existing exact
@@ -141,24 +176,52 @@ std::vector<ExactPoint> makeExactPoints(int target) {
 }
 '@
 
-if (-not $text.Contains($oldExact)) {
-    throw 'Could not find circular makeExactPoints() block.'
-}
-$text = $text.Replace($oldExact, $newExact)
+$newExact = @'
+std::vector<ExactPoint> makeExactPoints(int target) {
+    // Exact 2*target by 2*target square. For target=432 this is 864x864,
+    // with offsets [-432, +431] on both axes = 746496 total positions.
+    // metric2 stores the expansion layer r for the square [-r, r-1]^2.
+    std::vector<ExactPoint> points;
+    const std::size_t side = static_cast<std::size_t>(target * 2);
+    points.reserve(side * side - 1U);
 
-$text = $text.Replace('Preparing exact disk points...', 'Preparing exact square points...')
-$text = $text.Replace('Full target disk is one biome.', 'Full target square is one biome.')
-$text = $text.Replace('-block disk is one biome.', '-block square is one biome.')
-$text = $text.Replace('inside its measured integer disk', 'inside its measured centered square')
-$text = $text.Replace('uniform disk necessarily passes', 'uniform square necessarily passes')
-$text = $text.Replace('matching-biome block positions / all block positions inside the target disk', 'matching-biome block positions / all block positions inside the target square')
-$text = $text.Replace('firstDifferentDistance=', 'firstDifferentSquareRadius=')
-$text = $text.Replace('firstDifferent=NONE_WITHIN_', 'firstDifferent=NONE_WITHIN_SQUARE_')
-$text = $text.Replace('firstMismatchDistance', 'firstMismatchSquareRadius')
+    for (int dz = -target; dz < target; ++dz) {
+        for (int dx = -target; dx < target; ++dx) {
+            if (dx == 0 && dz == 0) continue;
+            const int rx = dx >= 0 ? dx + 1 : -dx;
+            const int rz = dz >= 0 ? dz + 1 : -dz;
+            const int squareLayer = std::max(rx, rz);
+            const int metric2 = squareLayer * squareLayer;
+            points.push_back({dx, dz, metric2});
+        }
+    }
+    std::sort(points.begin(), points.end(), [](const ExactPoint& a, const ExactPoint& b) {
+        return a.d2 < b.d2;
+    });
+    return points;
+}
+'@
+
+if ($text.Contains($circleExact)) { $text = $text.Replace($circleExact, $newExact) }
+elseif ($text.Contains($v1Exact)) { $text = $text.Replace($v1Exact, $newExact) }
+else { throw 'Could not find exact-point generator to convert to 864x864 square.' }
+
+$text = $text.Replace('Preparing exact disk points...', 'Preparing exact 864-square points...')
+$text = $text.Replace('Preparing exact square points...', 'Preparing exact 864-square points...')
+$text = $text.Replace('-block disk is one biome.', '-halfwidth square (864x864 at target 432) is one biome.')
+$text = $text.Replace('-block square is one biome.', '-halfwidth square (864x864 at target 432) is one biome.')
+$text = $text.Replace('inside its measured integer disk', 'inside its measured square [-r,r-1]^2')
+$text = $text.Replace('inside its measured centered square', 'inside its measured square [-r,r-1]^2')
+$text = $text.Replace('uniform disk necessarily passes', 'uniform target square necessarily passes')
+$text = $text.Replace('uniform square necessarily passes', 'uniform target square necessarily passes')
+$text = $text.Replace('firstDifferentDistance=', 'firstDifferentSquareLayer=')
+$text = $text.Replace('firstDifferentSquareRadius=', 'firstDifferentSquareLayer=')
+$text = $text.Replace('firstMismatchDistance', 'firstMismatchSquareLayer')
+$text = $text.Replace('firstMismatchSquareRadius', 'firstMismatchSquareLayer')
 
 [System.IO.File]::WriteAllText($sourcePath, $text, [System.Text.UTF8Encoding]::new($false))
 
-Write-Host 'Applied SQUARE target semantics to SingleBiomeRadiusFinder.'
-Write-Host 'Target 432 now means X and Z are both checked from -432 through +432.'
-Write-Host 'That is an 865 x 865 square = 748225 block positions.'
-Write-Host 'safeRadius is now Chebyshev/square radius, not circular Euclidean radius.'
+Write-Host 'Applied EXACT 864x864 square target semantics.'
+Write-Host 'target=432 => X offsets -432..+431 and Z offsets -432..+431.'
+Write-Host 'Total target positions: 864 x 864 = 746496.'
+Write-Host 'safeRadius now means the largest clean square [-r, r-1] on both axes.'
