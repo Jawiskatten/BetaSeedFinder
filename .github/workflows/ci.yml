@@ -27,3 +27,15 @@ jobs:
       - name: Build application JAR
         shell: pwsh
         run: ./scripts/build-java.ps1 -ProjectRoot "$env:GITHUB_WORKSPACE"
+      - name: Smoke-test Beta 1.7.3 spawn-island finder
+        shell: pwsh
+        run: java -cp build/java/classes beta173.SpawnIslandFinder173 --start 0 --count 32 --threads 2 --max-radius 1
+      - name: Regression-test known detached candidates
+        shell: pwsh
+        run: |
+          $air = (java -cp build/java/classes beta173.SpawnIslandFinder173 --seed 22732869 --max-radius 1 | Out-String)
+          if ($air -notmatch 'status=DETACHED_OVER_AIR') { throw "22732869 no longer classifies as DETACHED_OVER_AIR`n$air" }
+          if ($air -notmatch 'diagonalExternalContacts=') { throw "new separation diagnostics missing`n$air" }
+
+          $mixed = (java -cp build/java/classes beta173.SpawnIslandFinder173 --seed 58222042 --max-radius 1 | Out-String)
+          if ($mixed -notmatch 'status=DETACHED_MIXED_AIR_WATER') { throw "58222042 no longer classifies as DETACHED_MIXED_AIR_WATER`n$mixed" }

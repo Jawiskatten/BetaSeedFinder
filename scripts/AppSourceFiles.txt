@@ -31,6 +31,10 @@ StatisticsTab.java
 TexturePanel.java
 UiFormat.java
 beta173/BetaTerrain173.java
+beta173/BetaChunk173.java
+beta173/SpawnIslandFinder173.java
+beta173/SpawnIslandCombinedFinder173.java
+beta173/WaterDetachedFinder173.java
 beta173/BiomeBase173.java
 beta173/WorldChunkManager173.java
 beta173/noise/NoiseGenerator173.java
