@@ -9,15 +9,29 @@ endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 add_executable(BetaSeedFinderWorker src/gpu_p20_benchmark.cpp)
+add_executable(SingleBiomeRadiusFinder src/single_biome_radius.cpp)
 
 if(BSF_NVIDIA_CUDA)
-    set_source_files_properties(src/gpu_p20_benchmark.cpp PROPERTIES LANGUAGE CUDA)
-    set_target_properties(BetaSeedFinderWorker PROPERTIES CUDA_STANDARD 17 CUDA_STANDARD_REQUIRED ON CUDA_SEPARABLE_COMPILATION OFF)
-    target_compile_definitions(BetaSeedFinderWorker PRIVATE BSF_NVIDIA_CUDA=1)
-    target_compile_options(BetaSeedFinderWorker PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3;--fmad=false;--ftz=false;--prec-div=true;--prec-sqrt=true>)
+    set_source_files_properties(
+        src/gpu_p20_benchmark.cpp
+        src/single_biome_radius.cpp
+        PROPERTIES LANGUAGE CUDA
+    )
+    foreach(target BetaSeedFinderWorker SingleBiomeRadiusFinder)
+        set_target_properties(${target} PROPERTIES CUDA_STANDARD 17 CUDA_STANDARD_REQUIRED ON CUDA_SEPARABLE_COMPILATION OFF)
+        target_compile_definitions(${target} PRIVATE BSF_NVIDIA_CUDA=1)
+        target_compile_options(${target} PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3;--fmad=false;--ftz=false;--prec-div=true;--prec-sqrt=true>)
+    endforeach()
 else()
-    set_source_files_properties(src/gpu_p20_benchmark.cpp PROPERTIES LANGUAGE HIP)
-    set_target_properties(BetaSeedFinderWorker PROPERTIES HIP_STANDARD 17 HIP_STANDARD_REQUIRED ON)
-    target_compile_options(BetaSeedFinderWorker PRIVATE $<$<COMPILE_LANGUAGE:HIP>:-O3;-ffp-contract=off;-fno-fast-math;-fno-associative-math>)
+    set_source_files_properties(
+        src/gpu_p20_benchmark.cpp
+        src/single_biome_radius.cpp
+        PROPERTIES LANGUAGE HIP
+    )
+    foreach(target BetaSeedFinderWorker SingleBiomeRadiusFinder)
+        set_target_properties(${target} PROPERTIES HIP_STANDARD 17 HIP_STANDARD_REQUIRED ON)
+        target_compile_options(${target} PRIVATE $<$<COMPILE_LANGUAGE:HIP>:-O3;-ffp-contract=off;-fno-fast-math;-fno-associative-math>)
+    endforeach()
 endif()
