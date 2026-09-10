@@ -2,7 +2,6 @@ package beta173;
 
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -12,11 +11,10 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * Research CLI for the Beta 1.7.3 cave loophole:
  * can the guaranteed first spawn test at world (0,0) select sand that belongs
- * to a finite, cave-detached solid component?
+ * to a finite, cave-detached solid component with AIR underneath it?
  *
- * A hit here is stronger than "some spawn candidate near zero": Beta tests
- * (0,0) first, so a valid hit is deterministic and does not depend on the
- * unseeded fallback random walk used when (0,0) is invalid.
+ * Water-supported ocean sand is tracked separately and is NOT counted as a
+ * cave candidate.
  */
 public final class SpawnIslandFinder173 {
     private static final int H = BetaChunk173.WORLD_HEIGHT;
@@ -39,16 +37,16 @@ public final class SpawnIslandFinder173 {
         }
 
         System.out.printf(Locale.ROOT,
-                "Beta 1.7.3 detached-spawn search: start=%d count=%d threads=%d maxRadius=%d%n",
+                "Beta 1.7.3 cave-spawn search: start=%d count=%d threads=%d maxRadius=%d%n",
                 config.startSeed, config.count, config.threads, config.maxRadius);
-        System.out.println("Target: vanilla first spawn coordinate (0,0), top block SAND, solid support component detached from bedrock/main terrain.");
+        System.out.println("Target: vanilla first spawn coordinate (0,0), SAND spawn component detached from main terrain with AIR underneath.");
 
         AtomicLong cursor = new AtomicLong(0L);
         AtomicLong checked = new AtomicLong(0L);
         AtomicLong sandSpawns = new AtomicLong(0L);
-        AtomicLong expanded = new AtomicLong(0L);
+        AtomicLong waterDetached = new AtomicLong(0L);
+        AtomicLong airCandidates = new AtomicLong(0L);
         AtomicLong inconclusive = new AtomicLong(0L);
-        AtomicLong hits = new AtomicLong(0L);
         AtomicBoolean done = new AtomicBoolean(false);
         List<Analysis> hitList = new ArrayList<>();
         Object hitLock = new Object();
@@ -71,9 +69,9 @@ public final class SpawnIslandFinder173 {
                 double averageRate = totalSeconds > 0.0D ? nowChecked / totalSeconds : 0.0D;
                 double percent = config.count == 0L ? 100.0D : 100.0D * nowChecked / (double) config.count;
                 System.out.printf(Locale.ROOT,
-                        "checked=%d/%d (%.3f%%) rate=%.1f/s avg=%.1f/s sandSpawn=%d expanded=%d inconclusive=%d hits=%d%n",
+                        "checked=%d/%d (%.3f%%) rate=%.1f/s avg=%.1f/s sandSpawn=%d waterDetached=%d airCandidates=%d inconclusive=%d%n",
                         nowChecked, config.count, percent, recentRate, averageRate,
-                        sandSpawns.get(), expanded.get(), inconclusive.get(), hits.get());
+                        sandSpawns.get(), waterDetached.get(), airCandidates.get(), inconclusive.get());
                 previousChecked = nowChecked;
                 previousNanos = now;
             }
@@ -83,9 +81,8 @@ public final class SpawnIslandFinder173 {
 
         Thread[] workers = new Thread[config.threads];
         for (int t = 0; t < workers.length; ++t) {
-            final int workerId = t;
             workers[t] = new Thread(() -> {
-                BetaChunk173 generator = new BetaChunk173(config.startSeed + workerId);
+                BetaChunk173 generator = new BetaChunk173(config.startSeed);
                 while (true) {
                     long index = cursor.getAndIncrement();
                     if (index >= config.count) break;
@@ -93,22 +90,16 @@ public final class SpawnIslandFinder173 {
                     generator.reseed(seed);
                     Analysis result = analyzeOrigin(seed, generator, config.maxRadius);
                     if (result.spawnIsSand) sandSpawns.incrementAndGet();
-                    if (result.radiusUsed > 0) expanded.incrementAndGet();
+                    if (result.status == Status.DETACHED_OVER_WATER) waterDetached.incrementAndGet();
                     if (result.status == Status.INCONCLUSIVE_LARGE_COMPONENT) inconclusive.incrementAndGet();
-                    if (result.status == Status.DETACHED) {
-                        hits.incrementAndGet();
+                    if (isAirCandidate(result.status)) {
+                        airCandidates.incrementAndGet();
                         synchronized (hitLock) {
                             hitList.add(result);
                             System.out.println();
-                            System.out.println("*** DETACHED SPAWN HIT ***");
+                            System.out.println("*** AIR-BELOW DETACHED SPAWN CANDIDATE ***");
                             printAnalysis(result);
-                            System.out.println("**************************");
-                        }
-                    } else if (result.status == Status.INCONCLUSIVE_LARGE_COMPONENT) {
-                        synchronized (hitLock) {
-                            System.out.printf(Locale.ROOT,
-                                    "candidate-too-large seed=%d supportY=%d componentBlocks>=%d reached radius=%d%n",
-                                    result.seed, result.supportY, result.componentBlocks, result.radiusUsed);
+                            System.out.println("******************************************");
                         }
                     }
                     checked.incrementAndGet();
@@ -124,16 +115,21 @@ public final class SpawnIslandFinder173 {
         double elapsed = Duration.between(startTime, Instant.now()).toMillis() / 1000.0D;
         double rate = elapsed > 0.0D ? checked.get() / elapsed : 0.0D;
         System.out.printf(Locale.ROOT,
-                "DONE checked=%d sandSpawn=%d expanded=%d inconclusive=%d hits=%d elapsed=%.3fs rate=%.1f seeds/s%n",
-                checked.get(), sandSpawns.get(), expanded.get(), inconclusive.get(), hits.get(), elapsed, rate);
+                "DONE checked=%d sandSpawn=%d waterDetached=%d airCandidates=%d inconclusive=%d elapsed=%.3fs rate=%.1f seeds/s%n",
+                checked.get(), sandSpawns.get(), waterDetached.get(), airCandidates.get(),
+                inconclusive.get(), elapsed, rate);
 
         if (!hitList.isEmpty()) {
             synchronized (hitLock) {
                 hitList.sort((a, b) -> Integer.compare(b.componentBlocks, a.componentBlocks));
-                System.out.println("Hits ranked by detached solid component size:");
+                System.out.println("Air-below candidates ranked by detached solid component size:");
                 for (Analysis hit : hitList) printAnalysis(hit);
             }
         }
+    }
+
+    private static boolean isAirCandidate(Status status) {
+        return status == Status.DETACHED_OVER_AIR || status == Status.DETACHED_MIXED_AIR_WATER;
     }
 
     static Analysis analyzeOrigin(long seed, BetaChunk173 generator, int maxRadius) {
@@ -141,30 +137,44 @@ public final class SpawnIslandFinder173 {
         int supportY = firstUncoveredY(originChunk, 0, 0);
         int supportBlock = blockAt(originChunk, 0, supportY, 0);
         if (supportBlock != BetaChunk173.SAND) {
-            return new Analysis(seed, Status.NOT_SAND_SPAWN, false, supportY, 0, 0, false, false);
+            return new Analysis(seed, Status.NOT_SAND_SPAWN, false, supportY,
+                    0, 0, false, false, 0, 0, 0);
         }
 
-        // Since (0,0) is a corner of chunk (0,0), a genuinely detached component
-        // often crosses into negative chunks. Build symmetric regions around the
-        // world origin and expand only when the component reaches the current edge.
         for (int radius = 1; radius <= maxRadius; ++radius) {
             Region region = generateRegion(generator, radius, originChunk);
             Component component = floodSolidComponent(region, 0, supportY, 0);
 
             if (component.touchesBottom) {
-                return new Analysis(seed, Status.CONNECTED_TO_MAIN_TERRAIN, true, supportY,
-                        component.blocks, radius, true, component.touchesBoundary);
+                return analysisFromComponent(seed, Status.CONNECTED_TO_MAIN_TERRAIN,
+                        supportY, radius, component);
             }
             if (!component.touchesBoundary) {
-                return new Analysis(seed, Status.DETACHED, true, supportY,
-                        component.blocks, radius, false, false);
+                Status detachedStatus;
+                if (component.airBelowFaces > 0 && component.waterBelowFaces > 0) {
+                    detachedStatus = Status.DETACHED_MIXED_AIR_WATER;
+                } else if (component.airBelowFaces > 0) {
+                    detachedStatus = Status.DETACHED_OVER_AIR;
+                } else if (component.waterBelowFaces > 0) {
+                    detachedStatus = Status.DETACHED_OVER_WATER;
+                } else {
+                    detachedStatus = Status.DETACHED_OTHER;
+                }
+                return analysisFromComponent(seed, detachedStatus, supportY, radius, component);
             }
         }
 
         Region region = generateRegion(generator, maxRadius, originChunk);
         Component component = floodSolidComponent(region, 0, supportY, 0);
-        return new Analysis(seed, Status.INCONCLUSIVE_LARGE_COMPONENT, true, supportY,
-                component.blocks, maxRadius, component.touchesBottom, component.touchesBoundary);
+        return analysisFromComponent(seed, Status.INCONCLUSIVE_LARGE_COMPONENT,
+                supportY, maxRadius, component);
+    }
+
+    private static Analysis analysisFromComponent(long seed, Status status, int supportY,
+                                                  int radius, Component component) {
+        return new Analysis(seed, status, true, supportY,
+                component.blocks, radius, component.touchesBottom, component.touchesBoundary,
+                component.airBelowFaces, component.waterBelowFaces, component.lavaBelowFaces);
     }
 
     /** Mirrors World.getFirstUncoveredBlock: start at y=63, walk up while y+1 is non-air. */
@@ -210,12 +220,12 @@ public final class SpawnIslandFinder173 {
         int sz = worldZ - region.minBlock;
         if (sx < 0 || sx >= region.width || sz < 0 || sz >= region.width
                 || worldY < 0 || worldY >= H) {
-            return new Component(0, false, true);
+            return new Component(0, false, true, 0, 0, 0);
         }
 
         int start = regionIndex(sx, worldY, sz, region.width);
         if (!BetaChunk173.isSolid(region.blocks[start])) {
-            return new Component(0, false, false);
+            return new Component(0, false, false, 0, 0, 0);
         }
 
         boolean[] visited = new boolean[region.blocks.length];
@@ -227,6 +237,9 @@ public final class SpawnIslandFinder173 {
         int count = 0;
         boolean bottom = false;
         boolean boundary = false;
+        int airBelowFaces = 0;
+        int waterBelowFaces = 0;
+        int lavaBelowFaces = 0;
 
         final int plane = region.width * H;
         while (head < tail) {
@@ -241,6 +254,19 @@ public final class SpawnIslandFinder173 {
             if (y == 0) bottom = true;
             if (x == 0 || z == 0 || x == region.width - 1 || z == region.width - 1) boundary = true;
 
+            if (y > 0) {
+                int below = region.blocks[index - 1];
+                if (!BetaChunk173.isSolid(below)) {
+                    if (below == BetaChunk173.AIR) {
+                        ++airBelowFaces;
+                    } else if (below == BetaChunk173.WATER_MOVING || below == BetaChunk173.WATER_STILL) {
+                        ++waterBelowFaces;
+                    } else if (below == BetaChunk173.LAVA_MOVING || below == BetaChunk173.LAVA_STILL) {
+                        ++lavaBelowFaces;
+                    }
+                }
+            }
+
             if (x > 0) tail = enqueue(region, visited, queue, tail, index - plane);
             if (x + 1 < region.width) tail = enqueue(region, visited, queue, tail, index + plane);
             if (z > 0) tail = enqueue(region, visited, queue, tail, index - H);
@@ -248,12 +274,11 @@ public final class SpawnIslandFinder173 {
             if (y > 0) tail = enqueue(region, visited, queue, tail, index - 1);
             if (y + 1 < H) tail = enqueue(region, visited, queue, tail, index + 1);
 
-            // Reaching bedrock proves this is ordinary/main terrain, so there is
-            // no reason to flood millions more blocks in an expanded region.
             if (bottom) break;
         }
 
-        return new Component(count, bottom, boundary);
+        return new Component(count, bottom, boundary,
+                airBelowFaces, waterBelowFaces, lavaBelowFaces);
     }
 
     private static int enqueue(Region region, boolean[] visited, int[] queue, int tail, int index) {
@@ -270,9 +295,10 @@ public final class SpawnIslandFinder173 {
 
     private static void printAnalysis(Analysis result) {
         System.out.printf(Locale.ROOT,
-                "seed=%d status=%s spawnSand=%s supportY=%d componentBlocks=%d radius=%d touchesBottom=%s touchesBoundary=%s%n",
+                "seed=%d status=%s spawnSand=%s supportY=%d componentBlocks=%d radius=%d touchesBottom=%s touchesBoundary=%s airBelowFaces=%d waterBelowFaces=%d lavaBelowFaces=%d%n",
                 result.seed, result.status, result.spawnIsSand, result.supportY,
-                result.componentBlocks, result.radiusUsed, result.touchesBottom, result.touchesBoundary);
+                result.componentBlocks, result.radiusUsed, result.touchesBottom, result.touchesBoundary,
+                result.airBelowFaces, result.waterBelowFaces, result.lavaBelowFaces);
     }
 
     private static void printUsage() {
@@ -283,6 +309,9 @@ public final class SpawnIslandFinder173 {
         System.out.println();
         System.out.println("Verify one seed:");
         System.out.println("  java -cp <jar-or-classes> beta173.SpawnIslandFinder173 --seed 12345 --max-radius 2");
+        System.out.println();
+        System.out.println("Only detached components with at least one AIR block directly beneath an exposed bottom face count as airCandidates.");
+        System.out.println("Water-only detached sand is reported separately as waterDetached.");
         System.out.println();
         System.out.println("Options:");
         System.out.println("  --start <long>       first world seed (default 0)");
@@ -296,7 +325,10 @@ public final class SpawnIslandFinder173 {
     enum Status {
         NOT_SAND_SPAWN,
         CONNECTED_TO_MAIN_TERRAIN,
-        DETACHED,
+        DETACHED_OVER_WATER,
+        DETACHED_OVER_AIR,
+        DETACHED_MIXED_AIR_WATER,
+        DETACHED_OTHER,
         INCONCLUSIVE_LARGE_COMPONENT
     }
 
@@ -309,9 +341,13 @@ public final class SpawnIslandFinder173 {
         final int radiusUsed;
         final boolean touchesBottom;
         final boolean touchesBoundary;
+        final int airBelowFaces;
+        final int waterBelowFaces;
+        final int lavaBelowFaces;
 
         Analysis(long seed, Status status, boolean spawnIsSand, int supportY,
-                 int componentBlocks, int radiusUsed, boolean touchesBottom, boolean touchesBoundary) {
+                 int componentBlocks, int radiusUsed, boolean touchesBottom, boolean touchesBoundary,
+                 int airBelowFaces, int waterBelowFaces, int lavaBelowFaces) {
             this.seed = seed;
             this.status = status;
             this.spawnIsSand = spawnIsSand;
@@ -320,6 +356,9 @@ public final class SpawnIslandFinder173 {
             this.radiusUsed = radiusUsed;
             this.touchesBottom = touchesBottom;
             this.touchesBoundary = touchesBoundary;
+            this.airBelowFaces = airBelowFaces;
+            this.waterBelowFaces = waterBelowFaces;
+            this.lavaBelowFaces = lavaBelowFaces;
         }
     }
 
@@ -327,11 +366,18 @@ public final class SpawnIslandFinder173 {
         final int blocks;
         final boolean touchesBottom;
         final boolean touchesBoundary;
+        final int airBelowFaces;
+        final int waterBelowFaces;
+        final int lavaBelowFaces;
 
-        Component(int blocks, boolean touchesBottom, boolean touchesBoundary) {
+        Component(int blocks, boolean touchesBottom, boolean touchesBoundary,
+                  int airBelowFaces, int waterBelowFaces, int lavaBelowFaces) {
             this.blocks = blocks;
             this.touchesBottom = touchesBottom;
             this.touchesBoundary = touchesBoundary;
+            this.airBelowFaces = airBelowFaces;
+            this.waterBelowFaces = waterBelowFaces;
+            this.lavaBelowFaces = lavaBelowFaces;
         }
     }
 
