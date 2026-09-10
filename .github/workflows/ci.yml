@@ -17,7 +17,8 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v7
       - name: Set up JDK 17
-        uses:
+        uses: actions/setup-java@v5
+        with:
           distribution: temurin
           java-version: "17"
       - name: Verify repository
