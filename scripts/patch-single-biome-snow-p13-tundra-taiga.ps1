@@ -37,29 +37,23 @@ if (-not (Test-Path $backupPath -PathType Leaf)) {
     Copy-Item -LiteralPath $sourcePath -Destination $backupPath
 }
 
-# ---------------------------------------------------------------------------
-# Exact Beta 1.7.3 identity used by this patch
-# ---------------------------------------------------------------------------
-# After the game's 64-level climate quantization, let f be temperature and
-# f1 = rain * f. The lookup does:
-#   f < 0.1                     -> TUNDRA
-#   f1 < 0.2 && f < 0.5         -> TUNDRA
-#   otherwise f < 0.5           -> TAIGA
-# The SWAMPLAND branch needs f1 > 0.5, impossible when f < 0.5 because
-# rain <= 1, so f1 <= f. Conversely neither TUNDRA nor TAIGA occurs at f>=0.5.
-# Therefore {TUNDRA,TAIGA} is EXACTLY quantized f < 0.5 and rain is irrelevant.
-# ---------------------------------------------------------------------------
+# Beta 1.7.3 exact identity used here:
+# after 64-level quantization, {TUNDRA, TAIGA} is exactly temperature f < 0.5.
+# Rain cannot change membership in this union, so the scout can skip rain fully.
 
-# Normal scout point predicate: exact Tundra-or-Taiga test, temperature only.
+# ---------------------------------------------------------------------------
+# 1) Normal scout point predicate -> exact Tundra-or-Taiga temperature test.
+# ---------------------------------------------------------------------------
 $searchPattern = '(?s)__device__ __forceinline__ bool searchIsTundraAt\(.*?\r?\n\}'
 $searchMatches = [regex]::Matches($text, $searchPattern)
 if ($searchMatches.Count -ne 1) {
     throw "Expected exactly one searchIsTundraAt helper, found $($searchMatches.Count)."
 }
+
 $newSearch = @'
 // SNOW_P13_TUNDRA_TAIGA
-// Exact Beta 1.7.3 predicate for the union {TUNDRA, TAIGA}.
-// The union is exactly quantized temperature f < 0.5, so rain is irrelevant.
+// Exact Beta 1.7.3 predicate for {TUNDRA, TAIGA}.
+// This union is exactly quantized temperature f < 0.5; rain is irrelevant.
 __device__ __forceinline__ bool searchIsTundraAt(
         const SearchClimateState& s,
         int blockX,
@@ -86,12 +80,15 @@ __device__ __forceinline__ bool searchIsTundraAt(
 '@
 $text = [regex]::Replace($text, $searchPattern, $newSearch.TrimEnd(), 1)
 
-# Fused first screen: there is no longer an ambiguous/rain class.
+# ---------------------------------------------------------------------------
+# 2) Fused first screen -> no ambiguous/rain class. 0=pass, 2=fail.
+# ---------------------------------------------------------------------------
 $tempPattern = '(?s)__device__ __forceinline__ int p8TemperatureClassAt\(.*?\r?\n\}'
 $tempMatches = [regex]::Matches($text, $tempPattern)
 if ($tempMatches.Count -ne 1) {
     throw "Expected exactly one p8TemperatureClassAt helper, found $($tempMatches.Count)."
 }
+
 $newTemp = @'
 __device__ __forceinline__ int p8TemperatureClassAt(
         const SearchClimateState& s,
@@ -119,12 +116,14 @@ __device__ __forceinline__ int p8TemperatureClassAt(
 
     d0Out = d0;
     tiOut = ti;
-    return f < 0.5f ? 0 : 2; // 0 pass, 2 fail; class 1 no longer exists.
+    return f < 0.5f ? 0 : 2;
 }
 '@
 $text = [regex]::Replace($text, $tempPattern, $newTemp.TrimEnd(), 1)
 
-# Do not construct lazy rain state for survivors anymore.
+# ---------------------------------------------------------------------------
+# 3) Rain is now provably irrelevant in the scout hot path.
+# ---------------------------------------------------------------------------
 $rainInitPattern = '(?m)^    if \(alive\) \{\r?\n        p8InitRain\(s, seed, lane\);\r?\n    \}'
 $rainInitMatches = [regex]::Matches($text, $rainInitPattern)
 if ($rainInitMatches.Count -ne 1) {
@@ -137,7 +136,6 @@ $text = [regex]::Replace(
     1
 )
 
-# Remove the unreachable first-point rain evaluation too.
 $firstRainPattern = '(?s)    bool firstRainFailed = false;\r?\n    if \(alive && firstClass == 1\) \{.*?\r?\n    \}'
 $firstRainMatches = [regex]::Matches($text, $firstRainPattern)
 if ($firstRainMatches.Count -ne 1) {
@@ -150,131 +148,49 @@ $text = [regex]::Replace(
     1
 )
 
-# Exact verifier: failure means a biome outside {TUNDRA,TAIGA}.
-$exactPattern = '(?s)__global__ void exactKernel\(.*?\r?\n\}(?=\r?\n\r?\n__global__ void coverageKernel\()'
-$exactMatches = [regex]::Matches($text, $exactPattern)
-if ($exactMatches.Count -ne 1) {
-    throw "Expected exactly one exactKernel before coverageKernel, found $($exactMatches.Count)."
+# ---------------------------------------------------------------------------
+# 4) Exact verifier. P12 leaves this simple comparison untouched, so patch the
+#    actual mismatch predicate directly instead of depending on function order.
+# ---------------------------------------------------------------------------
+$oldExactMismatch = 'if (static_cast<int>(b) != s.baseBiome) atomicMin(&s.groupMinD2, p.d2);'
+$exactMismatchCount = ([regex]::Matches($text, [regex]::Escape($oldExactMismatch))).Count
+if ($exactMismatchCount -ne 1) {
+    throw "Expected exactly one exact-verifier biome mismatch comparison, found $exactMismatchCount."
 }
-$newExact = @'
-__global__ void exactKernel(
-        std::int64_t seed,
-        int centerX,
-        int centerZ,
-        const ExactPoint* points,
-        int pointCount,
-        int target,
-        ExactResult* result
-) {
-    const int lane = static_cast<int>(threadIdx.x);
-    __shared__ ClimateState s;
-    initClimate(s, seed);
+$newExactMismatch = @'
+if (b != static_cast<unsigned char>(TUNDRA) &&
+                b != static_cast<unsigned char>(TAIGA)) atomicMin(&s.groupMinD2, p.d2);
+'@.TrimEnd()
+$text = $text.Replace($oldExactMismatch, $newExactMismatch)
 
-    if (lane == 0) {
-        s.baseBiome = static_cast<int>(biomeAt(s, centerX, centerZ));
-        result->safeRadius = 0;
-        result->firstMismatchD2 = -1;
-        result->baseBiome = s.baseBiome;
-        if (s.baseBiome != static_cast<int>(TUNDRA) &&
-            s.baseBiome != static_cast<int>(TAIGA)) {
-            result->firstMismatchD2 = 0;
-        }
-    }
-    __syncthreads();
-
-    if (s.baseBiome != static_cast<int>(TUNDRA) &&
-        s.baseBiome != static_cast<int>(TAIGA)) {
-        return;
-    }
-
-    for (int base = 0; base < pointCount; base += EXACT_THREADS) {
-        if (lane == 0) s.groupMinD2 = 0x7fffffff;
-        __syncthreads();
-
-        const int idx = base + lane;
-        if (idx < pointCount) {
-            const ExactPoint p = points[idx];
-            const unsigned char b = biomeAt(s, centerX + p.dx, centerZ + p.dz);
-            if (b != static_cast<unsigned char>(TUNDRA) &&
-                b != static_cast<unsigned char>(TAIGA)) {
-                atomicMin(&s.groupMinD2, p.d2);
-            }
-        }
-        __syncthreads();
-
-        if (s.groupMinD2 != 0x7fffffff) {
-            if (lane == 0) {
-                const int d2 = s.groupMinD2;
-                int root = static_cast<int>(sqrt(static_cast<double>(d2)));
-                while ((root + 1) * (root + 1) <= d2) ++root;
-                while (root * root > d2) --root;
-                const int ceilRoot = root * root == d2 ? root : root + 1;
-                int safe = ceilRoot - 1;
-                if (safe < 0) safe = 0;
-                if (safe > target) safe = target;
-                result->safeRadius = safe;
-                result->firstMismatchD2 = d2;
-            }
-            return;
-        }
-    }
-
-    if (lane == 0) {
-        result->safeRadius = target;
-        result->firstMismatchD2 = -1;
-    }
+# ---------------------------------------------------------------------------
+# 5) Full-square coverage. Count TUNDRA + TAIGA together.
+# ---------------------------------------------------------------------------
+$oldCoverageCompare = 'if (static_cast<int>(b) == s.baseBiome) ++localSame;'
+$coverageCompareCount = ([regex]::Matches($text, [regex]::Escape($oldCoverageCompare))).Count
+if ($coverageCompareCount -ne 1) {
+    throw "Expected exactly one coverage biome comparison, found $coverageCompareCount."
 }
-'@
-$text = [regex]::Replace($text, $exactPattern, $newExact.TrimEnd(), 1)
+$newCoverageCompare = @'
+if (b == static_cast<unsigned char>(TUNDRA) ||
+            b == static_cast<unsigned char>(TAIGA)) ++localSame;
+'@.TrimEnd()
+$text = $text.Replace($oldCoverageCompare, $newCoverageCompare)
 
-# True 864x864 coverage now counts both snow biomes.
-$coveragePattern = '(?s)__global__ void coverageKernel\(.*?\r?\n\}(?=\r?\n\r?\nstd::uint64_t parseU64\()'
-$coverageMatches = [regex]::Matches($text, $coveragePattern)
-if ($coverageMatches.Count -ne 1) {
-    throw "Expected exactly one coverageKernel, found $($coverageMatches.Count)."
+$oldCenterCount = 'sameCount = 1; // center block itself'
+$centerCountMatches = ([regex]::Matches($text, [regex]::Escape($oldCenterCount))).Count
+if ($centerCountMatches -eq 1) {
+    $text = $text.Replace(
+        $oldCenterCount,
+        'sameCount = (s.baseBiome == TUNDRA || s.baseBiome == TAIGA) ? 1 : 0; // center'
+    )
+} elseif ($centerCountMatches -gt 1) {
+    throw "Expected at most one coverage center count initializer, found $centerCountMatches."
 }
-$newCoverage = @'
-__global__ void coverageKernel(
-        std::int64_t seed,
-        int centerX,
-        int centerZ,
-        const ExactPoint* points,
-        int pointCount,
-        CoverageResult* result
-) {
-    const int lane = static_cast<int>(threadIdx.x);
-    __shared__ ClimateState s;
-    __shared__ int sameCount;
-    initClimate(s, seed);
 
-    if (lane == 0) {
-        const unsigned char centerBiome = biomeAt(s, centerX, centerZ);
-        sameCount = (centerBiome == static_cast<unsigned char>(TUNDRA) ||
-                     centerBiome == static_cast<unsigned char>(TAIGA)) ? 1 : 0;
-    }
-    __syncthreads();
-
-    int localSame = 0;
-    for (int idx = lane; idx < pointCount; idx += EXACT_THREADS) {
-        const ExactPoint p = points[idx];
-        const unsigned char b = biomeAt(s, centerX + p.dx, centerZ + p.dz);
-        if (b == static_cast<unsigned char>(TUNDRA) ||
-            b == static_cast<unsigned char>(TAIGA)) {
-            ++localSame;
-        }
-    }
-    atomicAdd(&sameCount, localSame);
-    __syncthreads();
-
-    if (lane == 0) {
-        result->sameCount = sameCount;
-        result->totalCount = pointCount + 1;
-    }
-}
-'@
-$text = [regex]::Replace($text, $coveragePattern, $newCoverage.TrimEnd(), 1)
-
-# Console wording only; host selection/log structures stay compatible.
+# ---------------------------------------------------------------------------
+# 6) Console wording only. Data/log structures remain compatible.
+# ---------------------------------------------------------------------------
 $text = $text.Replace(
     'P12 scout: TUNDRA-only | zero-mod replay | fast exact permutation RNG | parallel octave init | lazy bounded rain | warp votes | tuned 4x16',
     'P13 scout: TUNDRA+TAIGA | exact temp-only snow predicate | zero rain work | fast permutation RNG | warp votes | tuned 4x16'
@@ -293,7 +209,7 @@ $text = $text.Replace(
 )
 
 Write-Host 'Applied Snow P13: TUNDRA + TAIGA are both allowed.' -ForegroundColor Green
-Write-Host 'Exact rule: every position in the 864x864 square must be TUNDRA or TAIGA.'
-Write-Host 'Scout rule is exact quantized temperature f < 0.5; rain is skipped entirely.'
+Write-Host 'Exact rule: every position in the 864x864 square may be TUNDRA or TAIGA.'
+Write-Host 'Scout rule: exact quantized temperature f < 0.5; rain work is skipped.'
 Write-Host 'Exact verifier and full-square coverage now treat TUNDRA+TAIGA as one allowed set.'
-Write-Host 'P12 temperature/RNG optimizations, square probes, GPU compaction and jackpot recall are preserved.'
+Write-Host 'P12 RNG/temp optimizations, square probes, GPU compaction and jackpot recall are preserved.'
