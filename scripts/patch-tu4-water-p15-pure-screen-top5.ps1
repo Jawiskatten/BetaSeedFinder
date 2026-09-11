@@ -22,7 +22,8 @@ if ($text.Contains('TU4_WATER_P15_PURE_SCREEN_TOP5')) {
 if (-not $text.Contains('TU4_WATER_P14_PURE_SCREEN_TOP8')) {
     throw 'P15 requires P14 pure screen top-8 first.'
 }
-if (-not $text.Contains('TU4_WATER_P13_SCREEN_RECALL_AUDIT')) {
+if (-not ($text.Contains('TU4_WATER_P13B_SCREEN_RECALL_AUDIT') -or
+          $text.Contains('TU4_WATER_P13_SCREEN_RECALL_AUDIT'))) {
     throw 'P15 expects P13b audit machinery underneath P14.'
 }
 
@@ -34,11 +35,7 @@ if (-not (Test-Path $backupPath -PathType Leaf)) {
 # P13b 2000-batch ground-truth histogram for the true best-of-24 screen rank:
 #   rank 0..4 = 1271+422+152+69+45 = 1959 / 2000 = 97.95% recall
 #   rank 0..7 = 1996 / 2000 = 99.80% recall
-# P14 proves 8 full exacts run at ~4.14M seeds/s on the RX 7800 XT.  Reducing
-# the expensive 201x201 full exact stage from 8 to 5 should increase raw rate.
-# Even after multiplying by the measured 97.95% best-of-24 retention, the
-# expected effective search throughput is higher than P14.  Final records remain
-# fully exact; this only changes which screened finalists receive full exact.
+# Reduce full exacts from eight to five; final records remain fully exact.
 
 $markerPos = $text.IndexOf('// TU4_WATER_P14_PURE_SCREEN_TOP8')
 if ($markerPos -lt 0) { throw 'Could not locate P14 marker.' }
