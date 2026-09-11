@@ -32,11 +32,10 @@ if (-not (Test-Path $backupPath -PathType Leaf)) {
     Copy-Item -LiteralPath $sourcePath -Destination $backupPath
 }
 
-# P8 does not change the scout, finalist portfolio, 800x800 metric, or exact
-# terrain math. It only evaluates all selected finalists in one GPU batch.
-# P7/P6 previously did 24 separate state uploads, density launches, land-count
-# launches, synchronizations, and result copies per scout batch. P8 turns those
-# into one upload set + two launches + one synchronization/copy for all finalists.
+# P8 keeps the P7 metric/scout/finalist portfolio unchanged. It only batches the
+# expensive exact evaluation so all finalists share transfers, launches and one
+# synchronization. This v2 patcher finds function regions structurally instead
+# of requiring byte-identical generated P7 source.
 
 $markerPos = $text.IndexOf('// TU4_WATER_P7_800_INTERIOR')
 if ($markerPos -lt 0) {
@@ -50,31 +49,42 @@ $marker = @'
 $text = $text.Insert($markerPos, $marker + "`n")
 
 # -------------------------------------------------------------------------
-# 1) Batch the density kernel over candidateCount independent exact seeds.
+# 1) Batch exactSeaDensityKernel structurally.
 # -------------------------------------------------------------------------
-$oldDensityHead = @'
-__global__ void exactSeaDensityKernel(
-        const p20::PerlinState* terrain,
-        const p20::PerlinState* tempStates,
-        const p20::PerlinState* rainStates,
-        const p20::PerlinState* blendStates,
-        double* seaDensity
-) {
-    const int idx = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
-    if (idx >= COARSE_POINT_COUNT) return;
+$densityStart = $text.IndexOf('__global__ void exactSeaDensityKernel(')
+if ($densityStart -lt 0) {
+    throw 'Could not locate exactSeaDensityKernel.'
+}
+$densityBrace = $text.IndexOf('{', $densityStart)
+if ($densityBrace -lt 0) {
+    throw 'Could not locate exactSeaDensityKernel body.'
+}
+$densitySignature = $text.Substring($densityStart, $densityBrace - $densityStart)
+if ($densitySignature.Contains('candidateCount')) {
+    throw 'exactSeaDensityKernel already appears batched but P8 marker is missing.'
+}
+if (-not $densitySignature.Contains('double* seaDensity')) {
+    throw 'Could not locate seaDensity parameter in exactSeaDensityKernel.'
+}
+$newDensitySignature = $densitySignature.Replace(
+    'double* seaDensity',
+    "double* seaDensity,`n        int candidateCount"
+)
+$text = $text.Remove($densityStart, $densityBrace - $densityStart).Insert($densityStart, $newDensitySignature)
 
-    const int ix = idx / COARSE_POINTS;
-    const int iz = idx - ix * COARSE_POINTS;
-'@
-$newDensityHead = @'
-__global__ void exactSeaDensityKernel(
-        const p20::PerlinState* terrain,
-        const p20::PerlinState* tempStates,
-        const p20::PerlinState* rainStates,
-        const p20::PerlinState* blendStates,
-        double* seaDensity,
-        int candidateCount
-) {
+# Replace only the old single-candidate index prologue, leaving the exact math.
+$densityStart = $text.IndexOf('__global__ void exactSeaDensityKernel(')
+$oldDensityIdx = '    const int idx = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);'
+$densityIdxPos = $text.IndexOf($oldDensityIdx, $densityStart)
+if ($densityIdxPos -lt 0) {
+    throw 'Could not locate exactSeaDensityKernel single-candidate index line.'
+}
+$densityIxMarker = '    const int ix = idx / COARSE_POINTS;'
+$densityIxPos = $text.IndexOf($densityIxMarker, $densityIdxPos)
+if ($densityIxPos -lt 0) {
+    throw 'Could not locate exactSeaDensityKernel ix line.'
+}
+$newDensityPrologue = @'
     const int globalIdx = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
     const int totalPoints = candidateCount * COARSE_POINT_COUNT;
     if (globalIdx >= totalPoints) return;
@@ -87,34 +97,45 @@ __global__ void exactSeaDensityKernel(
     blendStates += static_cast<std::size_t>(candidate) * 2;
     seaDensity += static_cast<std::size_t>(candidate) * COARSE_POINT_COUNT;
 
-    const int ix = idx / COARSE_POINTS;
-    const int iz = idx - ix * COARSE_POINTS;
 '@
-$count = ([regex]::Matches($text, [regex]::Escape($oldDensityHead.TrimEnd()))).Count
-if ($count -ne 1) {
-    throw "Expected exactly one exactSeaDensityKernel header, found $count."
+$text = $text.Remove($densityIdxPos, $densityIxPos - $densityIdxPos).Insert($densityIdxPos, $newDensityPrologue)
+
+# -------------------------------------------------------------------------
+# 2) Batch countLandKernel structurally.
+# -------------------------------------------------------------------------
+$countStart = $text.IndexOf('__global__ void countLandKernel(')
+if ($countStart -lt 0) {
+    throw 'Could not locate countLandKernel.'
 }
-$text = $text.Replace($oldDensityHead.TrimEnd(), $newDensityHead.TrimEnd())
+$countBrace = $text.IndexOf('{', $countStart)
+if ($countBrace -lt 0) {
+    throw 'Could not locate countLandKernel body.'
+}
+$countSignature = $text.Substring($countStart, $countBrace - $countStart)
+if ($countSignature.Contains('candidateCount')) {
+    throw 'countLandKernel already appears batched but P8 marker is missing.'
+}
+if (-not $countSignature.Contains('int* landCount')) {
+    throw 'Could not locate landCount parameter in countLandKernel.'
+}
+$newCountSignature = $countSignature.Replace(
+    'int* landCount',
+    "int* landCount,`n        int candidateCount"
+)
+$text = $text.Remove($countStart, $countBrace - $countStart).Insert($countStart, $newCountSignature)
 
-# -------------------------------------------------------------------------
-# 2) Batch the land-count kernel. Each candidate owns one atomic accumulator.
-# -------------------------------------------------------------------------
-$oldCountHead = @'
-__global__ void countLandKernel(
-        const double* seaDensity,
-        int* landCount
-) {
-    const int cell = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
-    if (cell >= COARSE_CELL_COUNT) return;
-
-    const int cx = cell / COARSE_CELLS;
-'@
-$newCountHead = @'
-__global__ void countLandKernel(
-        const double* seaDensity,
-        int* landCount,
-        int candidateCount
-) {
+$countStart = $text.IndexOf('__global__ void countLandKernel(')
+$oldCellIdx = '    const int cell = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);'
+$cellIdxPos = $text.IndexOf($oldCellIdx, $countStart)
+if ($cellIdxPos -lt 0) {
+    throw 'Could not locate countLandKernel single-candidate index line.'
+}
+$cxMarker = '    const int cx = cell / COARSE_CELLS;'
+$cxPos = $text.IndexOf($cxMarker, $cellIdxPos)
+if ($cxPos -lt 0) {
+    throw 'Could not locate countLandKernel cx line.'
+}
+$newCountPrologue = @'
     const int globalCell = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
     const int totalCells = candidateCount * COARSE_CELL_COUNT;
     if (globalCell >= totalCells) return;
@@ -124,29 +145,20 @@ __global__ void countLandKernel(
     seaDensity += static_cast<std::size_t>(candidate) * COARSE_POINT_COUNT;
     landCount += candidate;
 
-    const int cx = cell / COARSE_CELLS;
 '@
-$count = ([regex]::Matches($text, [regex]::Escape($oldCountHead.TrimEnd()))).Count
-if ($count -ne 1) {
-    throw "Expected exactly one countLandKernel header, found $count."
-}
-$text = $text.Replace($oldCountHead.TrimEnd(), $newCountHead.TrimEnd())
+$text = $text.Remove($cellIdxPos, $cxPos - $cellIdxPos).Insert($cellIdxPos, $newCountPrologue)
 
 # -------------------------------------------------------------------------
-# 3) Replace the one-candidate workspace with a persistent N-candidate workspace.
-#    Host buffers are persistent too, avoiding per-batch large allocations.
+# 3) Replace ExactWorkspace with a persistent multi-candidate workspace.
 # -------------------------------------------------------------------------
 $workspaceStart = $text.IndexOf('struct ExactWorkspace {')
 if ($workspaceStart -lt 0) {
     throw 'Could not locate ExactWorkspace.'
 }
-$workspaceEndMarker = "`n};`n`nvoid buildExactStates("
-$workspaceEnd = $text.IndexOf($workspaceEndMarker, $workspaceStart)
-if ($workspaceEnd -lt 0) {
-    throw 'Could not locate end of ExactWorkspace.'
+$buildStart = $text.IndexOf("`nvoid buildExactStates(", $workspaceStart)
+if ($buildStart -lt 0) {
+    throw 'Could not locate buildExactStates after ExactWorkspace.'
 }
-$workspaceEnd += 4 # include newline + }; + newline
-
 $newWorkspace = @'
 struct ExactWorkspace {
     int capacity = 1;
@@ -196,21 +208,20 @@ struct ExactWorkspace {
     }
 };
 '@
-$text = $text.Remove($workspaceStart, $workspaceEnd - $workspaceStart).Insert($workspaceStart, $newWorkspace)
+$text = $text.Remove($workspaceStart, $buildStart - $workspaceStart).Insert($workspaceStart, $newWorkspace.TrimEnd())
 
 # -------------------------------------------------------------------------
-# 4) Replace runExact with batched exact evaluation + a one-seed wrapper used by
-#    --verify-seed. buildExactStates itself is unchanged/authoritative.
+# 4) Replace one-at-a-time runExact with runExactBatch. buildExactStates stays
+#    untouched, so every finalist gets exactly the same Perlin states as P7.
 # -------------------------------------------------------------------------
-$runStart = $text.IndexOf('ExactWaterResult runExact(std::int64_t seed, ExactWorkspace& w) {')
+$runStart = $text.IndexOf('ExactWaterResult runExact(')
 if ($runStart -lt 0) {
     throw 'Could not locate runExact.'
 }
-$runEnd = $text.IndexOf("`nstd::uint64_t parseU64(", $runStart)
-if ($runEnd -lt 0) {
-    throw 'Could not locate end of runExact.'
+$parseStart = $text.IndexOf('std::uint64_t parseU64(', $runStart)
+if ($parseStart -lt 0) {
+    throw 'Could not locate parseU64 after runExact.'
 }
-
 $newRun = @'
 std::vector<ExactWaterResult> runExactBatch(
         const std::vector<std::int64_t>& seeds,
@@ -288,27 +299,28 @@ ExactWaterResult runExact(std::int64_t seed, ExactWorkspace& w) {
     const std::vector<std::int64_t> seeds{seed};
     return runExactBatch(seeds, w)[0];
 }
+
 '@
-$text = $text.Remove($runStart, $runEnd - $runStart).Insert($runStart, $newRun)
+$text = $text.Remove($runStart, $parseStart - $runStart).Insert($runStart, $newRun)
 
 # -------------------------------------------------------------------------
-# 5) Allocate the workspace for TopExact candidates and execute the selected P6
-#    portfolio as one exact batch instead of calling runExact 24 times.
+# 5) Give the workspace TopExact capacity and exact-check the selected P6
+#    portfolio in one call.
 # -------------------------------------------------------------------------
-$workspaceCreateOld = '        ExactWorkspace exactWorkspace;'
-$workspaceCreateNew = '        ExactWorkspace exactWorkspace(std::max(1, o.topExact));'
-$count = ([regex]::Matches($text, [regex]::Escape($workspaceCreateOld))).Count
-if ($count -ne 1) {
-    throw "Expected exactly one ExactWorkspace construction, found $count."
+$workspaceCreatePos = $text.IndexOf('ExactWorkspace exactWorkspace;')
+if ($workspaceCreatePos -lt 0) {
+    throw 'Could not locate ExactWorkspace construction in main.'
 }
-$text = $text.Replace($workspaceCreateOld, $workspaceCreateNew)
+$text = $text.Remove($workspaceCreatePos, 'ExactWorkspace exactWorkspace;'.Length).Insert(
+    $workspaceCreatePos,
+    'ExactWorkspace exactWorkspace(std::max(1, o.topExact));'
+)
 
 $exactLoopNeedle = '            for (int rank = 0; rank < exactN; ++rank) {'
 $exactLoopPos = $text.IndexOf($exactLoopNeedle)
 if ($exactLoopPos -lt 0) {
     throw 'Could not locate exact finalist loop.'
 }
-
 $batchPrelude = @'
             std::vector<std::int64_t> exactSeeds(static_cast<std::size_t>(exactN));
             for (int rank = 0; rank < exactN; ++rank) {
@@ -323,13 +335,16 @@ $batchPrelude = @'
 '@
 $text = $text.Insert($exactLoopPos, $batchPrelude)
 
-$runExactOld = '                const ExactWaterResult r = runExact(seed, exactWorkspace);'
-$runExactNew = '                const ExactWaterResult& r = exactResults[static_cast<std::size_t>(rank)];'
-$count = ([regex]::Matches($text, [regex]::Escape($runExactOld))).Count
-if ($count -ne 1) {
-    throw "Expected exactly one per-finalist runExact call, found $count."
+$callPos = $text.IndexOf('runExact(seed, exactWorkspace)', $exactLoopPos + $batchPrelude.Length)
+if ($callPos -lt 0) {
+    throw 'Could not locate per-finalist runExact call.'
 }
-$text = $text.Replace($runExactOld, $runExactNew)
+$beforeCall = $text.Substring(0, $callPos)
+$lineStart = $beforeCall.LastIndexOf("`n") + 1
+$lineEnd = $text.IndexOf("`n", $callPos)
+if ($lineEnd -lt 0) { $lineEnd = $text.Length }
+$replacementLine = '                const ExactWaterResult& r = exactResults[static_cast<std::size_t>(rank)];'
+$text = $text.Remove($lineStart, $lineEnd - $lineStart).Insert($lineStart, $replacementLine)
 
 $text = $text.Replace(
     'Scout P7: P6 diverse finalists + 800x800 variable-interior exact scan; outer TU4 ring counted as forced water.',
@@ -343,7 +358,7 @@ $text = $text.Replace(
 )
 
 Write-Host 'Applied TU4 Water P8 batched exact finalist evaluator.' -ForegroundColor Green
-Write-Host 'Scout, P6 finalist portfolio, P7 800x800 area, and exact terrain math are unchanged.'
-Write-Host 'All TopExact finalists now share one set of GPU uploads, two kernel launches, and one synchronization.'
-Write-Host 'Workspace is preallocated for TopExact candidates; host/device bulk buffers are reused across batches.'
-Write-Host 'Use TopExact=24 for the direct P7 vs P8 throughput benchmark.'
+Write-Host 'P8 patcher v2: exact kernels/workspace/run loop located structurally.'
+Write-Host 'Scout, P6 finalist portfolio, P7 800x800 metric, and exact terrain math are unchanged.'
+Write-Host 'All TopExact finalists now share one state-upload set, two GPU launches, one sync, and one result copy.'
+Write-Host 'Verify the existing 96617-land record before benchmarking throughput.'
