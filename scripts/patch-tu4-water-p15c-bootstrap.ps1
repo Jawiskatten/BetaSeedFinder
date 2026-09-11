@@ -20,14 +20,16 @@ function Read-SourceText {
 function Invoke-PatchAndRequireMarker {
     param(
         [string]$ScriptName,
-        [string]$Marker,
+        [string[]]$Markers,
         [string]$Label
     )
 
     $textNow = Read-SourceText
-    if ($textNow.Contains($Marker)) {
-        Write-Host "$Label already present." -ForegroundColor DarkGray
-        return
+    foreach ($marker in $Markers) {
+        if ($textNow.Contains($marker)) {
+            Write-Host "$Label already present ($marker)." -ForegroundColor DarkGray
+            return
+        }
     }
 
     $scriptPath = Join-Path $PSScriptRoot $ScriptName
@@ -42,9 +44,10 @@ function Invoke-PatchAndRequireMarker {
     }
 
     $textNow = Read-SourceText
-    if (-not $textNow.Contains($Marker)) {
-        throw "$Label patcher returned but marker $Marker is still missing."
+    foreach ($marker in $Markers) {
+        if ($textNow.Contains($marker)) { return }
     }
+    throw "$Label patcher returned but none of the expected markers are present: $($Markers -join ', ')"
 }
 
 $text = Read-SourceText
@@ -54,11 +57,8 @@ if ($text.Contains('TU4_WATER_P15_PURE_SCREEN_TOP5')) {
     exit 0
 }
 
-# This bootstrap intentionally accepts any local state from P10 onward.
-# It advances only the missing stages, never restores/reset/cleans the source.
+# Bootstrap any local direct-chain state from P10 onward.
 # P10 -> P12c -> P13b -> P14 -> P15.
-# P11/P12 normal-chain sources are rejected because P12c is specifically the
-# direct-from-P10 branch and mixing the two routes would be unsafe.
 if ($text.Contains('TU4_WATER_P11_PAIRED_NOISE_REDUCED_LAND') -or
     $text.Contains('TU4_WATER_P12_EXACT_DENSITY_SCREEN')) {
     throw 'P15c detected the P11/normal-P12 branch. Refusing to mix it with the P12c direct-from-P10 chain.'
@@ -70,23 +70,23 @@ if (-not $text.Contains('TU4_WATER_P12_DIRECT_SCREEN')) {
     }
     Invoke-PatchAndRequireMarker `
         -ScriptName 'patch-tu4-water-p12c-direct-from-p10.ps1' `
-        -Marker 'TU4_WATER_P12_DIRECT_SCREEN' `
+        -Markers @('TU4_WATER_P12_DIRECT_SCREEN') `
         -Label 'P12c direct screen'
 }
 
 Invoke-PatchAndRequireMarker `
     -ScriptName 'patch-tu4-water-p13b-screen-recall-audit.ps1' `
-    -Marker 'TU4_WATER_P13_SCREEN_RECALL_AUDIT' `
+    -Markers @('TU4_WATER_P13B_SCREEN_RECALL_AUDIT','TU4_WATER_P13_SCREEN_RECALL_AUDIT') `
     -Label 'P13b screen audit'
 
 Invoke-PatchAndRequireMarker `
     -ScriptName 'patch-tu4-water-p14-pure-screen-top8.ps1' `
-    -Marker 'TU4_WATER_P14_PURE_SCREEN_TOP8' `
+    -Markers @('TU4_WATER_P14_PURE_SCREEN_TOP8') `
     -Label 'P14 pure screen top-8'
 
 Invoke-PatchAndRequireMarker `
     -ScriptName 'patch-tu4-water-p15-pure-screen-top5.ps1' `
-    -Marker 'TU4_WATER_P15_PURE_SCREEN_TOP5' `
+    -Markers @('TU4_WATER_P15_PURE_SCREEN_TOP5') `
     -Label 'P15 pure screen top-5'
 
 Write-Host 'P15c bootstrap complete.' -ForegroundColor Green
