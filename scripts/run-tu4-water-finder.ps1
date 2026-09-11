@@ -7,6 +7,7 @@ param(
     [switch]$UseSequence,
     [switch]$Rebuild,
     [switch]$ContinueAfterHit,
+    [int]$AuditScreenBatches = 0,
     [Nullable[long]]$VerifySeed = $null
 )
 
@@ -29,6 +30,9 @@ if ($UseSequence) {
 }
 if ($ContinueAfterHit) {
     $argsList += '--continue-after-hit'
+}
+if ($AuditScreenBatches -gt 0) {
+    $argsList += @('--audit-screen-batches', [string]$AuditScreenBatches)
 }
 if ($null -ne $VerifySeed) {
     # PowerShell boxes Nullable[Int64] values as Int64 when populated, so .Value
