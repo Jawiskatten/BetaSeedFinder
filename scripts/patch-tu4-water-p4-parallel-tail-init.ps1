@@ -29,36 +29,19 @@ if (-not (Test-Path $backupPath -PathType Leaf)) {
     Copy-Item -LiteralPath $sourcePath -Destination $backupPath
 }
 
-function Replace-Once([string]$old, [string]$new, [string]$label) {
-    $old = $old.Replace("`r`n", "`n")
-    $new = $new.Replace("`r`n", "`n")
-    $count = ([regex]::Matches($script:text, [regex]::Escape($old))).Count
-    if ($count -ne 1) {
-        throw "Expected exactly one $label, found $count."
-    }
-    $script:text = $script:text.Replace($old, $new)
+# Insert the P4 direct-jump helper immediately after the P3 helper. This avoids
+# brittle full-block matching against a locally generated P3/P3b source.
+$p3HelperStart = $text.IndexOf('__device__ __forceinline__ void p3JumpToNoise5Tail(')
+if ($p3HelperStart -lt 0) {
+    throw 'Could not locate p3JumpToNoise5Tail.'
 }
+$p3HelperEnd = $text.IndexOf("`n}`n", $p3HelperStart)
+if ($p3HelperEnd -lt 0) {
+    throw 'Could not locate end of p3JumpToNoise5Tail.'
+}
+$p3HelperEnd += 3
 
-# P3 still constructs the four retained noise5 Perlin permutations serially in
-# lane 0. Each constructor has an independent Java RNG start state on the common
-# no-nextInt-rejection path. P4 precomputes the affine LCG jump to each of those
-# four starts and lets lanes 0..3 build them concurrently in separate shared
-# PerlinState slots. All 32 sample lanes then evaluate the same four tail octaves.
-#
-# As in P3, this is a scout-only approximation around extremely rare Java
-# nextInt rejection retries. The full 864x864 exact finalist evaluator is not
-# changed and remains authoritative for every reported land/water record.
-$oldHelper = @'
-__device__ __forceinline__ void p3JumpToNoise5Tail(p20::JavaRandom& random) {
-    random.state =
-            (random.state * 0xDC270C086991ULL + 0x3E75AD5FE1A4ULL) & p20::JAVA_MASK;
-}
-'@
-$newHelper = @'
-__device__ __forceinline__ void p3JumpToNoise5Tail(p20::JavaRandom& random) {
-    random.state =
-            (random.state * 0xDC270C086991ULL + 0x3E75AD5FE1A4ULL) & p20::JAVA_MASK;
-}
+$p4Helper = @'
 
 // TU4_WATER_P4_PARALLEL_TAIL_INIT
 // Common-path affine start states for noise5 octaves 12..15. Each prior Perlin
@@ -79,42 +62,40 @@ __device__ __forceinline__ void p4JumpToTailOctave(
     }
 }
 '@
-Replace-Once $oldHelper.TrimEnd() $newHelper.TrimEnd() 'P3 jump helper'
+$text = $text.Insert($p3HelperEnd, $p4Helper)
 
-Replace-Once `
-    '    __shared__ p20::PerlinState perlin;' `
-    '    __shared__ p20::PerlinState tailPerlin[4];' `
-    'single shared scout Perlin state'
+# Scope all remaining edits to the scout kernel. The old P4 patcher tried to
+# match the whole generated P3 block byte-for-byte and failed on harmless local
+# formatting differences. Here we replace the unique region between the scout
+# RNG declaration and the d7 calculation instead.
+$kernelStart = $text.IndexOf('__global__ void waterScoutKernel(')
+if ($kernelStart -lt 0) {
+    throw 'Could not locate waterScoutKernel.'
+}
 
-$oldScout = @'
-    p20::JavaRandom rng;
-    if (lane == 0) {
-        rng.setSeed(seed);
-        // P3: jump directly to noise5 octave 12 on the overwhelmingly common
-        // no-nextInt-rejection path instead of serially replaying 18,340 draws.
-        p3JumpToNoise5Tail(rng);
-    }
-    __syncthreads();
+$sharedOld = '    __shared__ p20::PerlinState perlin;'
+$sharedPos = $text.IndexOf($sharedOld, $kernelStart)
+if ($sharedPos -lt 0) {
+    throw 'Could not locate scout shared Perlin state.'
+}
+$sharedNew = '    __shared__ p20::PerlinState tailPerlin[4];'
+$text = $text.Remove($sharedPos, $sharedOld.Length).Insert($sharedPos, $sharedNew)
 
-    double noise5 = 0.0;
-    // octave 12 starts at amplitude 2^-12. The four retained octaves dominate
-    // the legacy weighted sum while cutting point evaluations by 4x.
-    double amplitude = 1.0 / 4096.0;
-    for (int octave = SCOUT_FIRST_NOISE5_OCTAVE; octave < 16; ++octave) {
-        if (lane == 0) p20::initPerlin(rng, perlin);
-        __syncthreads();
+# Re-find positions after the shared-state edit.
+$kernelStart = $text.IndexOf('__global__ void waterScoutKernel(')
+$replaceStart = $text.IndexOf("    p20::JavaRandom rng;`n", $kernelStart)
+if ($replaceStart -lt 0) {
+    throw 'Could not locate P3 scout RNG block start.'
+}
+$replaceEndMarker = '    const double d7 = heightCenterFromNoise5(noise5);'
+$replaceEnd = $text.IndexOf($replaceEndMarker, $replaceStart)
+if ($replaceEnd -lt 0) {
+    throw 'Could not locate P3 scout RNG block end.'
+}
 
-        const double scale = 200.0 * amplitude;
-        const double weight = 1.0 / amplitude;
-        noise5 += p20::perlin2(perlin, coarseX * scale, coarseZ * scale) * weight;
-
-        __syncthreads();
-        amplitude /= 2.0;
-    }
-'@
 $newScout = @'
     // Four lanes construct the retained tail-octave permutations concurrently.
-    // This removes the remaining serial permutation-build chain from P3.
+    // Each lane starts from the seed and jumps straight to its own octave.
     if (lane < 4) {
         p20::JavaRandom octaveRng;
         octaveRng.setSeed(seed);
@@ -124,8 +105,8 @@ $newScout = @'
     __syncthreads();
 
     double noise5 = 0.0;
-    // octave 12 starts at amplitude 2^-12. Keep all four dominant tail octaves
-    // and the same 32 spatial samples as P3; only their initialization changed.
+    // Same four dominant tail octaves and same 32 spatial samples as P3.
+    // Only permutation initialization is parallelized.
     double amplitude = 1.0 / 4096.0;
 #pragma unroll
     for (int tail = 0; tail < 4; ++tail) {
@@ -135,16 +116,17 @@ $newScout = @'
                 tailPerlin[tail], coarseX * scale, coarseZ * scale) * weight;
         amplitude /= 2.0;
     }
+
 '@
-Replace-Once $oldScout.TrimEnd() $newScout.TrimEnd() 'P3 serial retained-octave scout block'
+$text = $text.Remove($replaceStart, $replaceEnd - $replaceStart).Insert($replaceStart, $newScout)
 
 $text = $text.Replace(
     'Scout P3: 32-point tail4 + affine RNG jump; rank by continuous d7 sum; exact finalists unchanged.',
     'Scout P4: 32-point tail4 + parallel 4-octave init + affine RNG jumps; d7 ranking; exact finalists unchanged.'
 )
 
-# Show the actual continuous scout score beside exact records so the next tuning
-# pass can compare d7 ranking against real land count directly from pasted logs.
+# Add the continuous scout score to exact record lines when the P3 record tail
+# is present. This is diagnostic only and does not change ranking or exactness.
 $oldRecordTail = '<< " scoutLow=" << hLow[idx] << "/32\n";'
 $newRecordTail = @'
 << " scoutLow=" << hLow[idx] << "/32"
@@ -161,6 +143,7 @@ if ($text.Contains($oldRecordTail)) {
 )
 
 Write-Host 'Applied TU4 Water P4 parallel tail-octave initialization.' -ForegroundColor Green
-Write-Host 'Retained noise5 permutations now build concurrently in four lanes instead of serially in lane 0.'
+Write-Host 'P4 patcher v2: scout block located structurally instead of exact full-text matching.'
+Write-Host 'Retained noise5 permutations now build concurrently in four lanes.'
 Write-Host 'Spatial scout stays 32 points and tail4; ranking stays continuous d7Sum.'
 Write-Host 'Exact 864x864 terrain measurement and record metric are unchanged.'
