@@ -29,91 +29,69 @@ if (-not (Test-Path $backupPath -PathType Leaf)) {
     Copy-Item -LiteralPath $sourcePath -Destination $backupPath
 }
 
-function Replace-Once([string]$old, [string]$new, [string]$label) {
-    $old = $old.Replace("`r`n", "`n")
-    $new = $new.Replace("`r`n", "`n")
-    $count = ([regex]::Matches($script:text, [regex]::Escape($old))).Count
-    if ($count -ne 1) {
-        throw "Expected exactly one $label, found $count."
-    }
-    $script:text = $script:text.Replace($old, $new)
-}
-
-# P3/P4 ranked candidates by raw d7 sum. The pasted exact records show why that
-# is not the right proxy for MIN LAND: a sample far below sea level keeps making
-# raw d7Sum look better even though, for the final objective, an underwater
-# column already counts as water and extra depth buys nothing. Conversely, one
-# tall sampled peak can make d7Sum look bad even if almost everything else is
-# ocean. P5 ranks a soft approximation to the sea-level threshold instead.
+# -------------------------------------------------------------------------
+# P5 goal
+# -------------------------------------------------------------------------
+# P3/P4 rank candidates by raw d7 sum. That is only loosely aligned with the
+# actual objective (minimum exact land columns): once a sampled macro-height is
+# comfortably under sea level, making it even deeper should not buy unlimited
+# score. P5 therefore uses a soft sea-level land penalty and restores the full
+# 8x8 spatial lattice without increasing the 32-thread scout block size.
 #
-# We also recover the missing half of P4's 8x8 lattice WITHOUT increasing the
-# block size. Each of the same 32 lanes evaluates its checkerboard point plus the
-# adjacent complementary point, so every seed gets all 64 spatial samples while
-# keeping one 32-lane wave/block on RDNA.
+# This v2 patcher intentionally locates regions structurally instead of matching
+# whole generated P4 blocks byte-for-byte. P4 itself is locally generated, so
+# comment/whitespace differences must not prevent the patch from applying.
 
-$heightHelper = @'
-__device__ __forceinline__ double heightCenterFromNoise5(double noise5) {
-    double d6 = noise5 / 8000.0;
-    if (d6 < 0.0) d6 = -d6 * 0.3;
-    d6 = d6 * 3.0 - 2.0;
-    if (d6 < 0.0) {
-        d6 /= 2.0;
-        if (d6 < -1.0) d6 = -1.0;
-        d6 /= 1.4;
-        d6 /= 2.0;
-    } else {
-        if (d6 > 1.0) d6 = 1.0;
-        d6 /= 8.0;
-    }
-    d6 *= 17.0 / 16.0;
-    return 17.0 / 2.0 + d6 * 4.0;
+# -------------------------------------------------------------------------
+# 1) Add sea-level penalty helper after heightCenterFromNoise5.
+# -------------------------------------------------------------------------
+$heightStart = $text.IndexOf('__device__ __forceinline__ double heightCenterFromNoise5(')
+if ($heightStart -lt 0) {
+    throw 'Could not locate heightCenterFromNoise5.'
 }
-'@
-$heightHelperP5 = @'
-__device__ __forceinline__ double heightCenterFromNoise5(double noise5) {
-    double d6 = noise5 / 8000.0;
-    if (d6 < 0.0) d6 = -d6 * 0.3;
-    d6 = d6 * 3.0 - 2.0;
-    if (d6 < 0.0) {
-        d6 /= 2.0;
-        if (d6 < -1.0) d6 = -1.0;
-        d6 /= 1.4;
-        d6 /= 2.0;
-    } else {
-        if (d6 > 1.0) d6 = 1.0;
-        d6 /= 8.0;
-    }
-    d6 *= 17.0 / 16.0;
-    return 17.0 / 2.0 + d6 * 4.0;
+$heightEnd = $text.IndexOf("`n}`n", $heightStart)
+if ($heightEnd -lt 0) {
+    throw 'Could not locate end of heightCenterFromNoise5.'
 }
+$heightEnd += 3
+
+$penaltyHelper = @'
 
 // TU4_WATER_P5_FULL64_SOFT_WATER
-// Sea surface is coarse Y 7.875. Treat clearly submerged macro samples as zero
-// land penalty and clearly elevated samples as one, with a six-block-wide soft
-// transition (coarse 7.5..8.25) around sea level. Lower total penalty is better.
+// Sea surface is coarse Y 7.875. Samples clearly underwater pay zero land
+// penalty, clearly elevated samples pay one, and values around sea level get a
+// smooth fractional penalty. Lower total penalty is better.
 __device__ __forceinline__ double p5SeaLandPenalty(double d7) {
     if (d7 <= 7.5) return 0.0;
     if (d7 >= 8.25) return 1.0;
     return (d7 - 7.5) / 0.75;
 }
 '@
-Replace-Once $heightHelper.TrimEnd() $heightHelperP5.TrimEnd() 'heightCenterFromNoise5 helper'
+$text = $text.Insert($heightEnd, $penaltyHelper)
 
-$oldCoords = @'
-    // 32 samples chosen as an alternating checkerboard of the original 8x8
-    // cell-center lattice. Every row is represented and adjacent rows sample
-    // opposite columns, avoiding the directional bias of a plain 4x8 grid.
-    const int row = lane >> 2;
-    const int col = ((lane & 3) << 1) + (row & 1);
-    const int qx = -108 + ((2 * col + 1) * COARSE_CELLS) / (2 * SCOUT_GRID);
-    const int qz = -108 + ((2 * row + 1) * COARSE_CELLS) / (2 * SCOUT_GRID);
-    const double coarseX = static_cast<double>(qx);
-    const double coarseZ = static_cast<double>(qz);
-'@
+# -------------------------------------------------------------------------
+# 2) Scope the remaining edits to waterScoutKernel.
+# -------------------------------------------------------------------------
+$kernelStart = $text.IndexOf('__global__ void waterScoutKernel(')
+if ($kernelStart -lt 0) {
+    throw 'Could not locate waterScoutKernel.'
+}
+
+# Replace the P4 single checkerboard coordinate with a complementary pair.
+$coordStart = $text.IndexOf('    const int row = lane >> 2;', $kernelStart)
+if ($coordStart -lt 0) {
+    throw 'Could not locate P4 scout coordinate start.'
+}
+$coordEndMarker = '    const double coarseZ = static_cast<double>(qz);'
+$coordEnd = $text.IndexOf($coordEndMarker, $coordStart)
+if ($coordEnd -lt 0) {
+    throw 'Could not locate P4 scout coordinate end.'
+}
+$coordEnd += $coordEndMarker.Length
+
 $newCoords = @'
-    // Full 8x8 coverage with only 32 lanes: each lane owns one checkerboard
-    // point plus its missing horizontal neighbor. Together the block evaluates
-    // all 64 original cell-center samples while retaining P4's 32-thread block.
+    // Full 8x8 coverage with 32 lanes. Each lane evaluates its P4 checkerboard
+    // point plus the missing horizontal neighbor, covering all 64 cell centers.
     const int row = lane >> 2;
     const int colA = ((lane & 3) << 1) + (row & 1);
     const int colB = colA + ((row & 1) ? -1 : 1);
@@ -123,32 +101,27 @@ $newCoords = @'
     const double coarseXA = static_cast<double>(qxA);
     const double coarseXB = static_cast<double>(qxB);
     const double coarseZ = static_cast<double>(qz);
-'@
-Replace-Once $oldCoords.TrimEnd() $newCoords.TrimEnd() 'P4 checkerboard coordinate block'
+'@.TrimEnd()
+$text = $text.Remove($coordStart, $coordEnd - $coordStart).Insert($coordStart, $newCoords)
 
-$oldEval = @'
-    double noise5 = 0.0;
-    // octave 12 starts at amplitude 2^-12. Keep all four dominant tail octaves
-    // and the same 32 spatial samples as P3; only their initialization changed.
-    double amplitude = 1.0 / 4096.0;
-#pragma unroll
-    for (int tail = 0; tail < 4; ++tail) {
-        const double scale = 200.0 * amplitude;
-        const double weight = 1.0 / amplitude;
-        noise5 += p20::perlin2(
-                tailPerlin[tail], coarseX * scale, coarseZ * scale) * weight;
-        amplitude /= 2.0;
-    }
+# Re-find the kernel after the coordinate replacement, then replace everything
+# from the P4 noise5 accumulator through its old sumScratch assignment.
+$kernelStart = $text.IndexOf('__global__ void waterScoutKernel(')
+$evalStart = $text.IndexOf('    double noise5 = 0.0;', $kernelStart)
+if ($evalStart -lt 0) {
+    throw 'Could not locate P4 noise5 evaluation start.'
+}
+$evalEndMarker = '    sumScratch[lane] = d7;'
+$evalEnd = $text.IndexOf($evalEndMarker, $evalStart)
+if ($evalEnd -lt 0) {
+    throw 'Could not locate P4 noise5 evaluation end.'
+}
+$evalEnd += $evalEndMarker.Length
 
-    const double d7 = heightCenterFromNoise5(noise5);
-    // Sea-surface y=63 is coarse vertical coordinate 7+7/8 = 7.875.
-    lowScratch[lane] = d7 < 7.875 ? 1 : 0;
-    sumScratch[lane] = d7;
-'@
 $newEval = @'
     double noise5A = 0.0;
     double noise5B = 0.0;
-    // Same dominant tail4 as P4, now evaluated at both complementary points.
+    // Same P4 dominant tail4, evaluated at both complementary spatial points.
     double amplitude = 1.0 / 4096.0;
 #pragma unroll
     for (int tail = 0; tail < 4; ++tail) {
@@ -163,14 +136,15 @@ $newEval = @'
 
     const double d7A = heightCenterFromNoise5(noise5A);
     const double d7B = heightCenterFromNoise5(noise5B);
-    // Keep an easy-to-read hard count, but rank by the soft threshold penalty.
+    // Hard underwater count stays diagnostic; the continuous soft penalty is
+    // the actual scout ranking score stored in hSum.
     lowScratch[lane] = (d7A < 7.875 ? 1 : 0) + (d7B < 7.875 ? 1 : 0);
     sumScratch[lane] = p5SeaLandPenalty(d7A) + p5SeaLandPenalty(d7B);
-'@
-Replace-Once $oldEval.TrimEnd() $newEval.TrimEnd() 'P4 single-point tail4 evaluation'
+'@.TrimEnd()
+$text = $text.Remove($evalStart, $evalEnd - $evalStart).Insert($evalStart, $newEval)
 
-# hSum is now a land-penalty sum, so P3's ascending comparator is already the
-# correct ordering. Update all human-readable labels and 32->64 sample counts.
+# hSum now means land penalty rather than raw d7 sum. P3/P4 already sort hSum
+# ascending, which is exactly what P5 wants. Only labels/sample counts change.
 $text = $text.Replace(
     'Scout P4: 32-point tail4 + parallel 4-octave init + affine RNG jumps; d7 ranking; exact finalists unchanged.',
     'Scout P5: full 64-point tail4 via 32 lanes + soft sea-level land penalty; exact finalists unchanged.'
@@ -190,6 +164,7 @@ $text = $text.Replace('scoutLow=" << globalScoutLow << "/32', 'scoutLow=" << glo
 )
 
 Write-Host 'Applied TU4 Water P5 full-64 soft-water scout.' -ForegroundColor Green
+Write-Host 'P5 patcher v2: P4 scout regions located structurally, not by exact full-text matching.'
 Write-Host 'Spatial coverage: 32 checkerboard samples -> all 64 8x8 samples, still using 32 lanes.'
 Write-Host 'Ranking: raw d7 sum -> soft sea-level land penalty (lower is better).'
 Write-Host 'Tail4 parallel init and exact 864x864 finalist measurement are unchanged.'
