@@ -19,19 +19,21 @@ if ($Rebuild -or -not (Test-Path $exe -PathType Leaf)) {
 }
 
 $argsList = @(
-    '--batch', $Batch,
-    '--top-exact', $TopExact,
-    '--start-attempt', $StartAttempt,
-    '--max-attempts', $MaxAttempts
+    '--batch', [string]$Batch,
+    '--top-exact', [string]$TopExact,
+    '--start-attempt', [string]$StartAttempt,
+    '--max-attempts', [string]$MaxAttempts
 )
 if ($UseSequence) {
-    $argsList += @('--sequence', $Sequence)
+    $argsList += @('--sequence', [string]$Sequence)
 }
 if ($ContinueAfterHit) {
     $argsList += '--continue-after-hit'
 }
 if ($null -ne $VerifySeed) {
-    $argsList += @('--verify-seed', $VerifySeed.Value)
+    # PowerShell boxes Nullable[Int64] values as Int64 when populated, so .Value
+    # can silently expand to nothing here. Pass the boxed value itself as text.
+    $argsList += @('--verify-seed', [string]$VerifySeed)
 }
 
 Push-Location $root
