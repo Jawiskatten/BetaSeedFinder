@@ -19,7 +19,9 @@ if ($text.Contains('TU4_WATER_P14_PURE_SCREEN_TOP8')) {
     Write-Host 'TU4 Water P14 pure screen top-8 routing is already applied.' -ForegroundColor Green
     exit 0
 }
-if (-not $text.Contains('TU4_WATER_P13_SCREEN_RECALL_AUDIT')) {
+$hasP13b = $text.Contains('TU4_WATER_P13B_SCREEN_RECALL_AUDIT')
+$hasP13 = $text.Contains('TU4_WATER_P13_SCREEN_RECALL_AUDIT')
+if (-not ($hasP13b -or $hasP13)) {
     throw 'P14 requires P13b screen-recall audit first.'
 }
 if (-not $text.Contains('TU4_WATER_P12_DIRECT_SCREEN')) {
@@ -35,13 +37,11 @@ if (-not (Test-Path $backupPath -PathType Leaf)) {
 #   chosen 6 screen + 2 safety recall = 99.2% (1984/2000)
 #   pure screen top-8 recall         = 99.8% (1996/2000)
 #   screen-rank misses: rank 8 x3, rank 12 x1
-# The two safety slots therefore displaced useful screen-ranked candidates much
-# more often than they rescued the true best. P14 keeps the same 8 full exacts
-# and therefore essentially the same throughput, but routes all 8 by the strong
-# 16x16 full-density score. Exact metric and audit machinery remain unchanged.
+# Keep the same eight full exacts, but route all eight by screen rank.
 
-$markerPos = $text.IndexOf('// TU4_WATER_P13_SCREEN_RECALL_AUDIT')
-if ($markerPos -lt 0) { throw 'Could not locate P13b marker.' }
+$parentMarker = if ($hasP13b) { '// TU4_WATER_P13B_SCREEN_RECALL_AUDIT' } else { '// TU4_WATER_P13_SCREEN_RECALL_AUDIT' }
+$markerPos = $text.IndexOf($parentMarker)
+if ($markerPos -lt 0) { throw 'Could not locate P13/P13b marker.' }
 $marker = @'
 // TU4_WATER_P14_PURE_SCREEN_TOP8
 // P13b proved pure screen top-8 beats 6 screen + 2 safety (99.8% vs 99.2% recall).
@@ -90,6 +90,10 @@ if ($count -ne 1) {
 }
 $text = $text.Replace($oldBlock, $newBlock)
 
+$text = $text.Replace(
+    'Scout P13b: P12c 8/24 screen + optional all-24 recall audit; final metric unchanged.',
+    'Scout P14: pure 16x16 screen top-8 + optional all-24 recall audit; exact metric unchanged.'
+)
 $text = $text.Replace(
     'Scout P13: P12c screen + optional all-24 recall audit; normal 8/24 search unchanged.',
     'Scout P14: pure 16x16 screen top-8 + optional all-24 recall audit; exact metric unchanged.'
