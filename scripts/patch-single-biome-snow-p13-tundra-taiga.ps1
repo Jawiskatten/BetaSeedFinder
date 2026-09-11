@@ -38,41 +38,28 @@ if (-not (Test-Path $backupPath -PathType Leaf)) {
 }
 
 # ---------------------------------------------------------------------------
-# Why this can be temperature-only and still be EXACT:
+# Exact Beta 1.7.3 identity used by this patch
 # ---------------------------------------------------------------------------
-# Beta 1.7.3 first quantizes temperature/rain to the 64x64 biome lookup table.
-# Let f = quantized temperature and f1 = quantized rain * f.
-#
-#   f < 0.1                        -> TUNDRA
-#   f1 < 0.2 && f < 0.5            -> TUNDRA
-#   otherwise, if f < 0.5          -> TAIGA
-#
-# The SWAMPLAND branch requires f1 > 0.5, which is impossible when f < 0.5
-# because quantized rain <= 1 and therefore f1 <= f. Conversely, neither
-# TUNDRA nor TAIGA can occur at f >= 0.5.
-#
-# Therefore the exact union {TUNDRA, TAIGA} is simply:
-#
-#                       quantized f < 0.5
-#
-# Rain is irrelevant for this target set. P13 keeps the exact temperature/blend
-# math and exact 64-level quantization, but removes all rain work from the hot
-# search path. Exact verification/coverage below still classify the real biome
-# and accept either TUNDRA or TAIGA.
+# After the game's 64-level climate quantization, let f be temperature and
+# f1 = rain * f. The lookup does:
+#   f < 0.1                     -> TUNDRA
+#   f1 < 0.2 && f < 0.5         -> TUNDRA
+#   otherwise f < 0.5           -> TAIGA
+# The SWAMPLAND branch needs f1 > 0.5, impossible when f < 0.5 because
+# rain <= 1, so f1 <= f. Conversely neither TUNDRA nor TAIGA occurs at f>=0.5.
+# Therefore {TUNDRA,TAIGA} is EXACTLY quantized f < 0.5 and rain is irrelevant.
 # ---------------------------------------------------------------------------
 
-# 1) Replace P9's normal point predicate with the exact Tundra-or-Taiga test.
+# Normal scout point predicate: exact Tundra-or-Taiga test, temperature only.
 $searchPattern = '(?s)__device__ __forceinline__ bool searchIsTundraAt\(.*?\r?\n\}'
 $searchMatches = [regex]::Matches($text, $searchPattern)
 if ($searchMatches.Count -ne 1) {
     throw "Expected exactly one searchIsTundraAt helper, found $($searchMatches.Count)."
 }
-
 $newSearch = @'
 // SNOW_P13_TUNDRA_TAIGA
-// Exact Beta 1.7.3 target predicate for the union {TUNDRA, TAIGA}.
-// After the game's 64-level temperature quantization this union is exactly
-// f < 0.5, so rainfall never needs to be initialized or evaluated.
+// Exact Beta 1.7.3 predicate for the union {TUNDRA, TAIGA}.
+// The union is exactly quantized temperature f < 0.5, so rain is irrelevant.
 __device__ __forceinline__ bool searchIsTundraAt(
         const SearchClimateState& s,
         int blockX,
@@ -99,13 +86,12 @@ __device__ __forceinline__ bool searchIsTundraAt(
 '@
 $text = [regex]::Replace($text, $searchPattern, $newSearch.TrimEnd(), 1)
 
-# 2) The fused first-stage classifier uses the same exact temperature rule.
+# Fused first screen: there is no longer an ambiguous/rain class.
 $tempPattern = '(?s)__device__ __forceinline__ int p8TemperatureClassAt\(.*?\r?\n\}'
 $tempMatches = [regex]::Matches($text, $tempPattern)
 if ($tempMatches.Count -ne 1) {
     throw "Expected exactly one p8TemperatureClassAt helper, found $($tempMatches.Count)."
 }
-
 $newTemp = @'
 __device__ __forceinline__ int p8TemperatureClassAt(
         const SearchClimateState& s,
@@ -133,44 +119,43 @@ __device__ __forceinline__ int p8TemperatureClassAt(
 
     d0Out = d0;
     tiOut = ti;
-
-    // Keep P8's existing return convention. There is no ambiguous/rain class
-    // for the snow-biome union: 0 = pass, 2 = fail.
-    return f < 0.5f ? 0 : 2;
+    return f < 0.5f ? 0 : 2; // 0 pass, 2 fail; class 1 no longer exists.
 }
 '@
 $text = [regex]::Replace($text, $tempPattern, $newTemp.TrimEnd(), 1)
 
-# 3) Rain state is now provably irrelevant. Do not build it for survivors.
-$rainInitBlock = @'
-    if (alive) {
-        p8InitRain(s, seed, lane);
-    }
-'@
-if (-not $text.Contains($rainInitBlock)) {
-    throw 'Could not find the P8 lazy-rain initialization call.'
+# Do not construct lazy rain state for survivors anymore.
+$rainInitPattern = '(?m)^    if \(alive\) \{\r?\n        p8InitRain\(s, seed, lane\);\r?\n    \}'
+$rainInitMatches = [regex]::Matches($text, $rainInitPattern)
+if ($rainInitMatches.Count -ne 1) {
+    throw "Expected exactly one p8InitRain call block, found $($rainInitMatches.Count)."
 }
-$text = $text.Replace($rainInitBlock, @'
-    // P13: no rain initialization. TUNDRA+TAIGA depends only on quantized temp.
-'@)
+$text = [regex]::Replace(
+    $text,
+    $rainInitPattern,
+    '    // P13: rain state is not built; TUNDRA+TAIGA is temperature-only.',
+    1
+)
 
-# Remove the now-unreachable first-point rain check as well. This also makes it
-# impossible for a future compiler decision to read the intentionally unbuilt rain state.
+# Remove the unreachable first-point rain evaluation too.
 $firstRainPattern = '(?s)    bool firstRainFailed = false;\r?\n    if \(alive && firstClass == 1\) \{.*?\r?\n    \}'
 $firstRainMatches = [regex]::Matches($text, $firstRainPattern)
 if ($firstRainMatches.Count -ne 1) {
     throw "Expected exactly one first-screen rain block, found $($firstRainMatches.Count)."
 }
-$text = [regex]::Replace($text, $firstRainPattern, '    bool firstRainFailed = false; // P13: no ambiguous rain class.', 1)
+$text = [regex]::Replace(
+    $text,
+    $firstRainPattern,
+    '    bool firstRainFailed = false; // P13: no ambiguous rain class.',
+    1
+)
 
-# 4) Exact verifier: a mismatch means a biome outside {TUNDRA, TAIGA}, not a
-#    biome different from the center. The center itself must also be in the set.
+# Exact verifier: failure means a biome outside {TUNDRA,TAIGA}.
 $exactPattern = '(?s)__global__ void exactKernel\(.*?\r?\n\}(?=\r?\n\r?\n__global__ void coverageKernel\()'
 $exactMatches = [regex]::Matches($text, $exactPattern)
 if ($exactMatches.Count -ne 1) {
     throw "Expected exactly one exactKernel before coverageKernel, found $($exactMatches.Count)."
 }
-
 $newExact = @'
 __global__ void exactKernel(
         std::int64_t seed,
@@ -242,13 +227,12 @@ __global__ void exactKernel(
 '@
 $text = [regex]::Replace($text, $exactPattern, $newExact.TrimEnd(), 1)
 
-# 5) Full-square coverage: count every TUNDRA or TAIGA position.
+# True 864x864 coverage now counts both snow biomes.
 $coveragePattern = '(?s)__global__ void coverageKernel\(.*?\r?\n\}(?=\r?\n\r?\nstd::uint64_t parseU64\()'
 $coverageMatches = [regex]::Matches($text, $coveragePattern)
 if ($coverageMatches.Count -ne 1) {
     throw "Expected exactly one coverageKernel, found $($coverageMatches.Count)."
 }
-
 $newCoverage = @'
 __global__ void coverageKernel(
         std::int64_t seed,
@@ -290,17 +274,13 @@ __global__ void coverageKernel(
 '@
 $text = [regex]::Replace($text, $coveragePattern, $newCoverage.TrimEnd(), 1)
 
-# 6) Make the console semantics explicit. Keep the data structures/log format
-#    compatible so all existing host-side selection/checkpoint behavior survives.
+# Console wording only; host selection/log structures stay compatible.
 $text = $text.Replace(
     'P12 scout: TUNDRA-only | zero-mod replay | fast exact permutation RNG | parallel octave init | lazy bounded rain | warp votes | tuned 4x16',
     'P13 scout: TUNDRA+TAIGA | exact temp-only snow predicate | zero rain work | fast permutation RNG | warp votes | tuned 4x16'
 )
 $text = $text.Replace('sameBiomeBlocks=', 'snowBiomeBlocks=')
 $text = $text.Replace('is one biome.', 'contains only TUNDRA/TAIGA.')
-$text = $text.Replace('all-Tundra', 'Tundra-or-Taiga')
-
-# P4's fast probe-record path hard-coded the old target label.
 $text = $text.Replace(
     '<< " biome=" << (bestProbe > 0 ? "TUNDRA" : "UNKNOWN")',
     '<< " allowed=" << (bestProbe > 0 ? "TUNDRA+TAIGA" : "UNKNOWN")'
@@ -313,8 +293,7 @@ $text = $text.Replace(
 )
 
 Write-Host 'Applied Snow P13: TUNDRA + TAIGA are both allowed.' -ForegroundColor Green
-Write-Host 'Exact target rule: every position in the 864x864 square must be TUNDRA or TAIGA.'
-Write-Host 'Scout is now exact temperature-only: quantized f < 0.5.'
-Write-Host 'Rain permutation construction/evaluation is skipped completely in the search hot path.'
-Write-Host 'Exact verifier and realCoverage now treat TUNDRA+TAIGA as one allowed set.'
-Write-Host 'All P12 RNG/temp optimizations, square probes, GPU compaction and jackpot recall are preserved.'
+Write-Host 'Exact rule: every position in the 864x864 square must be TUNDRA or TAIGA.'
+Write-Host 'Scout rule is exact quantized temperature f < 0.5; rain is skipped entirely.'
+Write-Host 'Exact verifier and full-square coverage now treat TUNDRA+TAIGA as one allowed set.'
+Write-Host 'P12 temperature/RNG optimizations, square probes, GPU compaction and jackpot recall are preserved.'
