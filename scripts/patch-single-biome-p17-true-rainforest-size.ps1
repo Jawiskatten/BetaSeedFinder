@@ -52,12 +52,12 @@ if (-not (Test-Path $backupPath -PathType Leaf)) {
 #   reproducible objective without clipping the biome at an arbitrary border.
 #
 # Scout strategy:
-#   P16's 8x8 connected sample proxy is kept, but the expensive rainfall state
-#   is made lazy again. Every seed first evaluates 64 exact temperature samples
-#   over the discovery window. Rainforest requires quantized temperature >= .97;
-#   seeds with no hot sample never construct rain permutations. For surviving
-#   seeds only the hot samples evaluate rain. This is especially useful when the
-#   discovery window is enlarged (recommended target=1024 => 2048x2048).
+#   Use one sample at the center of each cell in an 8x8 partition of the
+#   discovery window. For target=1024 this is a 2048x2048 discovery square with
+#   exact 256-block sample spacing. The expensive rainfall state is lazy: every
+#   seed first evaluates exact temperature+blend at the 64 samples. Rainforest
+#   requires quantized temperature >= .97, so groups with no hot sample never
+#   construct rain permutations. Only hot samples then evaluate exact rain.
 
 # ---------------------------------------------------------------------------
 # 1) ExactResult: retain P16 fields and add adaptive-measurement metadata.
@@ -229,11 +229,10 @@ __global__ void searchKernel(
     __syncthreads();
 
     const int discoveryHalf = ringCount > 0 ? ringRadii[ringCount - 1] : 1024;
-    const int sideMinusOne = 2 * discoveryHalf - 1;
     unsigned long long hotMask = 0ULL;
 
-    // Stage A: exact temperature at 64 samples. This costs only temp+blend and
-    // rejects the overwhelming majority of samples before rainfall exists.
+    // Stage A: one cell-centered sample per 8x8 discovery cell. For target=1024
+    // sample spacing is exactly 256 blocks and the outer margin is 128 blocks.
     for (int base = 0; base < 64; base += SEARCH_LANES_PER_SEED) {
         const int logical = base + lane;
         bool hot = false;
@@ -242,8 +241,8 @@ __global__ void searchKernel(
         if (validSeed && logical < 64) {
             const int row = logical >> 3;
             const int col = logical & 7;
-            const int dx = -discoveryHalf + (col * sideMinusOne) / 7;
-            const int dz = -discoveryHalf + (row * sideMinusOne) / 7;
+            const int dx = -discoveryHalf + ((2 * col + 1) * discoveryHalf) / 8;
+            const int dz = -discoveryHalf + ((2 * row + 1) * discoveryHalf) / 8;
             hot = p17RainforestTemperatureCandidate(
                     s, centerX + dx, centerZ + dz, d0, ti);
             sampleD0[seedGroup][logical] = d0;
@@ -282,8 +281,8 @@ __global__ void searchKernel(
         if (logical < 64 && ((hotMasks[seedGroup] >> logical) & 1ULL) != 0ULL) {
             const int row = logical >> 3;
             const int col = logical & 7;
-            const int dx = -discoveryHalf + (col * sideMinusOne) / 7;
-            const int dz = -discoveryHalf + (row * sideMinusOne) / 7;
+            const int dx = -discoveryHalf + ((2 * col + 1) * discoveryHalf) / 8;
+            const int dz = -discoveryHalf + ((2 * row + 1) * discoveryHalf) / 8;
             pass = p8AmbiguousRainPasses(
                     s,
                     centerX + dx,
@@ -555,5 +554,5 @@ Write-Host 'The target square is now only the discovery window; it does NOT clip
 Write-Host 'Exact measurement doubles outward until every Rainforest intersecting the discovery window is closed.'
 Write-Host 'length/width are the full component bounding-box dimensions after closure.'
 Write-Host 'Recommended first run: -Target 1024 (2048x2048 discovery window).'
-Write-Host 'Scout keeps 64 spatial samples but restores temperature-first lazy rainfall for speed.'
+Write-Host 'Scout: 8x8 cell-centered lattice (256-block spacing at target 1024) with temperature-first lazy rainfall.'
 Write-Host 'Hard exact-measure safety cap is 8192x8192; open-at-cap candidates are printed but never ranked.'
