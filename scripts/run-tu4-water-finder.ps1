@@ -1,6 +1,6 @@
 param(
-    [int]$Batch = 32768,
-    [int]$TopExact = 4,
+    [int]$Batch = 131072,
+    [int]$TopExact = 16,
     [UInt64]$StartAttempt = 0,
     [UInt64]$MaxAttempts = 0,
     [UInt64]$Sequence = 0,
