@@ -14,6 +14,8 @@ if (-not (Test-Path $sourcePath -PathType Leaf)) {
 }
 
 $text = [System.IO.File]::ReadAllText($sourcePath)
+# Make multiline patch matching independent of Git/Windows line-ending policy.
+$text = $text.Replace("`r`n", "`n")
 
 if ($text.Contains('TU4_WATER_P2_FAST_SCOUT')) {
     Write-Host 'TU4 Water P2 fast scout is already applied.' -ForegroundColor Green
@@ -29,6 +31,8 @@ if (-not (Test-Path $backupPath -PathType Leaf)) {
 }
 
 function Replace-Once([string]$old, [string]$new, [string]$label) {
+    $old = $old.Replace("`r`n", "`n")
+    $new = $new.Replace("`r`n", "`n")
     $count = ([regex]::Matches($script:text, [regex]::Escape($old))).Count
     if ($count -ne 1) {
         throw "Expected exactly one $label, found $count."
