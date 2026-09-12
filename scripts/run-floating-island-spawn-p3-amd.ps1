@@ -55,6 +55,19 @@ if (-not (Test-Path $sourceOriginal -PathType Leaf)) { throw "P3 source missing:
 # renamed it. Accept both states so upgrades do not depend on local history.
 $source = Join-Path $nativeDir ("FloatingIslandSpawnGpuFinderP3_compile_yield{0}.cpp" -f $GpuYieldMs)
 $sourceText = [System.IO.File]::ReadAllText($sourceOriginal)
+
+# The checked-in P3 source includes P1 with a path relative to its own source
+# directory. Our generated compile copy lives under build\..., so that relative
+# include would point at the wrong directory. Rewrite only the compile copy to
+# the real absolute P1 source path.
+$p1Source = Join-Path $ProjectRoot 'native\highest_pillar_spawn\HighestPillarSpawnGpuFinder.cpp'
+if (-not (Test-Path $p1Source -PathType Leaf)) { throw "P1 dependency missing: $p1Source" }
+$p1IncludeOld = '#include "../highest_pillar_spawn/HighestPillarSpawnGpuFinder.cpp"'
+if (-not $sourceText.Contains($p1IncludeOld)) { throw 'P3 compile patch could not find the P1 include line.' }
+$p1IncludePath = [System.IO.Path]::GetFullPath($p1Source).Replace('\','/')
+$p1IncludeNew = '#include "' + $p1IncludePath + '"'
+$sourceText = $sourceText.Replace($p1IncludeOld, $p1IncludeNew)
+
 $declOld = 'static int runSelfTest(Config c) {'
 $declNew = 'static int runSelfTestP3(Config c) {'
 $callOld = 'if (c.selfTest) return runSelfTest(c);'
@@ -84,7 +97,7 @@ $sourceText = $sourceText.Replace($launchMarker, "$launchMarker`r`n$yieldLine")
 $worker = Join-Path $nativeDir ("FloatingIslandSpawnGpuFinderAMD_P3_full_r{0}_yield{1}.exe" -f $Radius,$GpuYieldMs)
 $sigFile = "$worker.signature.txt"
 $archKey = ($arches -join ',')
-$sig = Get-NativeSignature $source $nativeSourceDir "AMD|$archKey|$api" ("FloatingIslandSpawnP3|full|r$Radius|yield$GpuYieldMs|desktop-v2")
+$sig = Get-NativeSignature $source $nativeSourceDir "AMD|$archKey|$api" ("FloatingIslandSpawnP3|full|r$Radius|yield$GpuYieldMs|desktop-v3")
 $old = if (Test-Path $sigFile) { Get-Content $sigFile -Raw } else { '' }
 if (-not (Test-Path $worker) -or $old -ne $sig) {
     Write-Host "Compiling FloatingIslandSpawn P3 AMD GPU finder for $archKey..."
