@@ -35,12 +35,28 @@ $apiDefine = '-DSKYBLOCK_COARSE_API_MODERN=1'
 
 $nativeDir = Join-Path $ProjectRoot ("build\floating-island-spawn-p3-full-r{0}\native" -f $Radius)
 New-Item -ItemType Directory -Force -Path $nativeDir | Out-Null
-$source = Join-Path $ProjectRoot 'native\floating_island_spawn\FloatingIslandSpawnGpuFinderP3.cpp'
-if (-not (Test-Path $source -PathType Leaf)) { throw "P3 source missing: $source" }
+$sourceOriginal = Join-Path $ProjectRoot 'native\floating_island_spawn\FloatingIslandSpawnGpuFinderP3.cpp'
+if (-not (Test-Path $sourceOriginal -PathType Leaf)) { throw "P3 source missing: $sourceOriginal" }
+
+# P3 includes the P1 implementation and also has its own runSelfTest(Config).
+# After preprocessing, `using namespace highest_pillar_spawn_p1` makes the
+# unqualified P3 call ambiguous. Build a deterministic temporary source with
+# the P3-local function/call renamed; leave the checked-in source readable.
+$source = Join-Path $nativeDir 'FloatingIslandSpawnGpuFinderP3_compile.cpp'
+$sourceText = [System.IO.File]::ReadAllText($sourceOriginal)
+$declOld = 'static int runSelfTest(Config c) {'
+$declNew = 'static int runSelfTestP3(Config c) {'
+$callOld = 'if (c.selfTest) return runSelfTest(c);'
+$callNew = 'if (c.selfTest) return runSelfTestP3(c);'
+if (-not $sourceText.Contains($declOld)) { throw 'P3 compile patch could not find local runSelfTest declaration.' }
+if (-not $sourceText.Contains($callOld)) { throw 'P3 compile patch could not find local runSelfTest call.' }
+$sourceText = $sourceText.Replace($declOld, $declNew).Replace($callOld, $callNew)
+[System.IO.File]::WriteAllText($source, $sourceText, [System.Text.UTF8Encoding]::new($false))
+
 $worker = Join-Path $nativeDir ("FloatingIslandSpawnGpuFinderAMD_P3_full_r{0}.exe" -f $Radius)
 $sigFile = "$worker.signature.txt"
 $archKey = ($arches -join ',')
-$sig = Get-NativeSignature $source $nativeSourceDir "AMD|$archKey|$api" ("FloatingIslandSpawnP3|full|r$Radius")
+$sig = Get-NativeSignature $source $nativeSourceDir "AMD|$archKey|$api" ("FloatingIslandSpawnP3|full|r$Radius|selftest-fix1")
 $old = if (Test-Path $sigFile) { Get-Content $sigFile -Raw } else { '' }
 if (-not (Test-Path $worker) -or $old -ne $sig) {
     Write-Host "Compiling FloatingIslandSpawn P3 AMD finder for $archKey..."
