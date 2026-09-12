@@ -1,0 +1,1 @@
+Extract into D:\Yes\BetaSeedFinder and allow folders to merge. Run BENCHMARK_LITERAL_LAVA_SPAWN_P2_AMD.bat, then RUN_LITERAL_LAVA_SPAWN_P2_AMD.bat.

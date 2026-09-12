@@ -1,0 +1,9 @@
+Literal Lava Spawn P2 validation
+
+PASS: C++17 host-side syntax check of the HIP translation unit.
+PASS: Java and C++ population RNG, nested lava-lake Y roll, ellipsoid count, and complete 2,048-cell lake-mask hash matched on 121 test seeds.
+PASS: Exact X=0,Z=0 surface sand/depth noise previously matched the Java reference below 1e-14.
+PASS: A hit requires pre-population sand at X=0,Z=0 and lava-mask coverage at the player's fixed bounding-box foot block Y=65.
+PASS: Lake boundary validation and post-lake player collision clearance are hard gates.
+
+The actual HIP compile and run occur on the target AMD machine. Cave carving is omitted from the fast lake-boundary pass, so candidate seeds require final vanilla Beta 1.7.3 verification.
