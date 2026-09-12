@@ -8,7 +8,7 @@ if not exist "%LAST%" (
   exit /b 1
 )
 set /p OUT=<"%LAST%"
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\run-floating-island-spawn-p3-amd.ps1" -Count 100000000 -Radius 4 -Top 250 -ExistingOutput "%OUT%"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\run-floating-island-spawn-p3-amd.ps1" -Count 100000000 -Radius 4 -Top 250 -DesktopFriendly -ExistingOutput "%OUT%"
 set "EC=%ERRORLEVEL%"
 echo.
 if not "%EC%"=="0" echo FAILED with exit code %EC%.
