@@ -1,0 +1,2 @@
+Extract this ZIP into D:\Yes\BetaSeedFinder and allow folders to merge. Then run BENCHMARK_CURSED_SPAWN_ORIGIN_P1_AMD.bat.
+
