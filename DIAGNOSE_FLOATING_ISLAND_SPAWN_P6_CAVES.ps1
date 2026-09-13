@@ -17,6 +17,25 @@ Invoke-WebRequest -UseBasicParsing "$base/FloatingIslandSpawnP6SpawnDiagnostic.c
 Write-Host 'Downloading P6 cave-aware diagnostic source...'
 Invoke-WebRequest -UseBasicParsing "$base/FloatingIslandSpawnP6CaveDiagnostic.cpp" -OutFile $caveSource
 
+# The cave diagnostic reuses helper functions from the raw diagnostic source.
+# Guard the raw file's standalone main() before embedding it. The previous
+# attempt renamed main with a macro, but the raw file temporarily redefines and
+# then undefines main around its P1 include, which erased the outer rename.
+$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+$rawText = [System.IO.File]::ReadAllText($rawSource)
+$mainPattern = '(?m)^int main\(int argc, char\*\* argv\) \{'
+if ($rawText -notmatch $mainPattern) { throw 'Could not locate raw P6 diagnostic main() for embed guard.' }
+$rawText = [regex]::Replace($rawText, $mainPattern, "#ifndef P6_RAW_DIAG_NO_MAIN`nint main(int argc, char** argv) {", 1)
+$rawText = $rawText.TrimEnd() + "`n#endif // P6_RAW_DIAG_NO_MAIN`n"
+[System.IO.File]::WriteAllText($rawSource, $rawText, $utf8NoBom)
+
+$caveText = [System.IO.File]::ReadAllText($caveSource)
+$embedPattern = '(?m)^#define main p6_raw_spawn_diag_embedded_main\r?\n#include "FloatingIslandSpawnP6SpawnDiagnostic\.cpp"\r?\n#undef main'
+if ($caveText -notmatch $embedPattern) { throw 'Could not locate P6 cave diagnostic raw-source embed header.' }
+$embedReplacement = "#define P6_RAW_DIAG_NO_MAIN 1`n#include `"FloatingIslandSpawnP6SpawnDiagnostic.cpp`"`n#undef P6_RAW_DIAG_NO_MAIN"
+$caveText = [regex]::Replace($caveText, $embedPattern, $embedReplacement, 1)
+[System.IO.File]::WriteAllText($caveSource, $caveText, $utf8NoBom)
+
 $nativeSourceDir = Get-BetaGpuNativeSourceDir $root
 $api = Get-CoarseGpuApi $nativeSourceDir
 if ($api -ne 'modern') { throw 'P6 cave diagnostic requires the current modern BetaSeedFinder GPU headers.' }
