@@ -116,23 +116,23 @@ static std::string solidRuns(const double* d, int fromY, int toY) {
     return first ? std::string("none") : out.str();
 }
 
-static void runOne(DeviceBuffers& b, std::int64_t seed, bool expectY81Solid) {
+static void runOne(DeviceBuffers& b, std::int64_t seed, const char* expectedRuns) {
     checkHip(hipMemcpy(b.seeds, &seed, sizeof(seed), hipMemcpyHostToDevice), "copy P6 regression seed");
     launchChunk(b, 1, 64, 0, 0);
     std::vector<double> density(static_cast<std::size_t>(coarsecore::CELLS));
     checkHip(hipMemcpy(density.data(), b.noise1, density.size() * sizeof(double), hipMemcpyDeviceToHost),
              "copy P6 chunk density");
 
+    const std::string runs = solidRuns(density.data(), 56, 100);
     std::cout << "\nseed=" << seed << '\n';
-    std::cout << "chunk_local_origin_solid_runs_y56_100=" << solidRuns(density.data(), 56, 100) << '\n';
+    std::cout << "chunk_local_origin_solid_runs_y56_100=" << runs << '\n';
     std::cout << std::scientific << std::setprecision(17);
     for (int y = 79; y <= 82; ++y) {
         const double v = originDensityAtBlock(density.data(), y);
         std::cout << "  y=" << y << " density=" << v << " solid=" << (v > 0.0 ? "YES" : "NO") << '\n';
     }
-    const bool y81 = solid(density.data(), 81);
-    if (y81 != expectY81Solid) {
-        throw std::runtime_error("Y81 solidity did not match vanilla regression expectation");
+    if (runs != expectedRuns) {
+        throw std::runtime_error(std::string("origin solid runs mismatch: expected ") + expectedRuns + ", got " + runs);
     }
 }
 
@@ -142,10 +142,11 @@ int run() {
     printDevice();
     DeviceBuffers b = allocateBuffers(1);
     try {
-        // Ground-truth save: this seed has air at Y80 and Y81, stone at Y82.
-        runOne(b, -3405360075020439777LL, false);
-        // Known real pillar: Y65..73 remains a solid upper run.
-        runOne(b, 6430576860599818994LL, true);
+        // Ground-truth save: Y80-Y81 are air and the upper terrain begins at Y82.
+        runOne(b, -3405360075020439777LL, "56-79,82-93");
+        // Known real pillar: lower surface ends at Y63, one-air gap Y64,
+        // and the disconnected upper run is Y65..73. Y81 is correctly air here.
+        runOne(b, 6430576860599818994LL, "56-63,65-73");
     } catch (...) {
         freeBuffers(b);
         throw;
