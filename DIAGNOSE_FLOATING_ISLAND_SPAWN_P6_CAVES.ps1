@@ -9,13 +9,13 @@ $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 $sourceDir = Join-Path $root 'native\floating_island_spawn'
 New-Item -ItemType Directory -Force -Path $sourceDir | Out-Null
-$base = 'https://raw.githubusercontent.com/Jawiskatten/BetaSeedFinder/floating-island-spawn-p6-vanilla-spawn/native/floating_island_spawn'
+$base = 'https://raw.githubusercontent.com/Jawiskatten/BetaSeedFinder/20ff1a20993e3a9df3f2b950e9f9b1ba08514e35/native/floating_island_spawn'
 $rawSource = Join-Path $sourceDir 'FloatingIslandSpawnP6SpawnDiagnostic.cpp'
 $caveSource = Join-Path $sourceDir 'FloatingIslandSpawnP6CaveDiagnostic.cpp'
 Write-Host 'Downloading P6 raw diagnostic dependency...'
-Invoke-WebRequest -UseBasicParsing "$base/FloatingIslandSpawnP6SpawnDiagnostic.cpp?v=p6cave1" -OutFile $rawSource
+Invoke-WebRequest -UseBasicParsing "$base/FloatingIslandSpawnP6SpawnDiagnostic.cpp" -OutFile $rawSource
 Write-Host 'Downloading P6 cave-aware diagnostic source...'
-Invoke-WebRequest -UseBasicParsing "$base/FloatingIslandSpawnP6CaveDiagnostic.cpp?v=p6cave1" -OutFile $caveSource
+Invoke-WebRequest -UseBasicParsing "$base/FloatingIslandSpawnP6CaveDiagnostic.cpp" -OutFile $caveSource
 
 $nativeSourceDir = Get-BetaGpuNativeSourceDir $root
 $api = Get-CoarseGpuApi $nativeSourceDir
