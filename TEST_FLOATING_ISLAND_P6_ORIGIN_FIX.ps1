@@ -22,7 +22,7 @@ $text = [System.IO.File]::ReadAllText($src)
 $old = 'const double terrainValue = slimSimplex2(p, perm, lane, 2.0 * scale, 2.0 * scale) * weight;'
 $new = @'
 // Vanilla Beta 1.7.3 func_4061_a uses var16 = 16 / 5 = 3 and samples
-// its 16x16 climate arrays at local index var17*3 + 1.  Therefore the
+// its 16x16 climate arrays at local index var17*3 + 1. Therefore the
 // origin density node uses climate sample (1,1), not the geometric (2,2).
 const double terrainValue = slimSimplex2(p, perm, lane, 1.0 * scale, 1.0 * scale) * weight;
 '@
@@ -34,7 +34,7 @@ $text = $text.Replace($old, $new.Trim())
 $patchedName = [System.IO.Path]::GetFileName($patched)
 $wrapperText = @"
 #define main p5_origin_fixed_embedded_main
-#include \"$patchedName\"
+#include "$patchedName"
 #undef main
 
 #include <iostream>
@@ -47,41 +47,41 @@ int main() {
     c.batch = 1;
     unsigned int* dCount = nullptr;
     ScoutHit* dHits = nullptr;
-    allocateArray(dCount, 1, \"allocate P6 regression counter\");
-    allocateArray(dHits, 1, \"allocate P6 regression hit\");
+    allocateArray(dCount, 1, "allocate P6 regression counter");
+    allocateArray(dHits, 1, "allocate P6 regression hit");
     std::vector<ScoutHit> host;
     try {
         launchBatch(c, 0, 1, dCount, dHits, host, true, 6430576860599818994LL);
-        if (host.size() != 1) throw std::runtime_error(\"known real pillar no longer passes corrected origin scout\");
+        if (host.size() != 1) throw std::runtime_error("known real pillar no longer passes corrected origin scout");
         const auto good = host.front();
-        std::cout << \"KNOWN_GOOD PASS seed=\" << good.seed
-                  << \" spawnSurfaceY=\" << good.spawnSurfaceY
-                  << \" firstUpperY=\" << good.firstUpperY
-                  << \" airGap=\" << good.airGap
-                  << \" playerFeetY=\" << good.playerFeetY
-                  << \" supportY=\" << good.supportY << '\\n';
+        std::cout << "KNOWN_GOOD PASS seed=" << good.seed
+                  << " spawnSurfaceY=" << good.spawnSurfaceY
+                  << " firstUpperY=" << good.firstUpperY
+                  << " airGap=" << good.airGap
+                  << " playerFeetY=" << good.playerFeetY
+                  << " supportY=" << good.supportY << '\n';
 
         host.clear();
         launchBatch(c, 0, 1, dCount, dHits, host, true, -3405360075020439777LL);
         if (!host.empty()) {
             const auto bad = host.front();
-            std::cerr << \"FALSE_POSITIVE_STILL_PASSES seed=\" << bad.seed
-                      << \" spawnSurfaceY=\" << bad.spawnSurfaceY
-                      << \" firstUpperY=\" << bad.firstUpperY
-                      << \" airGap=\" << bad.airGap
-                      << \" playerFeetY=\" << bad.playerFeetY
-                      << \" supportY=\" << bad.supportY << '\\n';
-            throw std::runtime_error(\"known two-block-gap false positive still passes\");
+            std::cerr << "FALSE_POSITIVE_STILL_PASSES seed=" << bad.seed
+                      << " spawnSurfaceY=" << bad.spawnSurfaceY
+                      << " firstUpperY=" << bad.firstUpperY
+                      << " airGap=" << bad.airGap
+                      << " playerFeetY=" << bad.playerFeetY
+                      << " supportY=" << bad.supportY << '\n';
+            throw std::runtime_error("known two-block-gap false positive still passes");
         }
-        std::cout << \"KNOWN_FALSE_POSITIVE REJECT seed=-3405360075020439777\\n\";
-        std::cout << \"P6 ORIGIN CLIMATE FIX REGRESSION OK\\n\";
+        std::cout << "KNOWN_FALSE_POSITIVE REJECT seed=-3405360075020439777\n";
+        std::cout << "P6 ORIGIN CLIMATE FIX REGRESSION OK\n";
     } catch (...) {
         if (dHits) (void)hipFree(dHits);
         if (dCount) (void)hipFree(dCount);
         throw;
     }
-    checkHip(hipFree(dHits), \"free P6 regression hits\");
-    checkHip(hipFree(dCount), \"free P6 regression counter\");
+    checkHip(hipFree(dHits), "free P6 regression hits");
+    checkHip(hipFree(dCount), "free P6 regression counter");
     return 0;
 }
 "@
