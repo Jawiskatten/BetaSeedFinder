@@ -93,20 +93,25 @@ New-Item -ItemType Directory -Force -Path $classes | Out-Null
 & $javac -source 8 -target 8 -encoding UTF-8 -cp $betaBin -d $classes $javaSrc
 if ($LASTEXITCODE -ne 0) { throw 'Beta173SkyblockOracle.java compilation failed.' }
 
-$out = Join-Path $RunDir 'exact_skyblock_analysis'
+# The MCP class directory intentionally contains only .class files. Beta's Block/Stat
+# bootstrap initializes StringTranslate, which unconditionally opens these two resources.
+# The dedicated server normally gets them from minecraft_server.jar; our sparse class
+# directory does not. Empty files are sufficient because the oracle never needs localized
+# strings, and Properties falls back to the untranslated key.
+$langDir = Join-Path $classes 'lang'
+New-Item -ItemType Directory -Force -Path $langDir | Out-Null
+[IO.File]::WriteAllText((Join-Path $langDir 'en_US.lang'), '')
+[IO.File]::WriteAllText((Join-Path $langDir 'stats_US.lang'), '')
+
+$out = Join-Path $RunDir 'exact_skyblock_analysis_v2'
 New-Item -ItemType Directory -Force -Path $out | Out-Null
 
 Write-Host ''
 Write-Host '=================================================================='
-Write-Host ' EXACT BETA 1.7.3 SKYBLOCK / TREE / WATER / LAVA ANALYSIS'
+Write-Host ' EXACT BETA 1.7.3 SKYBLOCK / TREE / WATER / LAVA ANALYSIS V2'
 Write-Host '=================================================================='
-Write-Host 'This is different from the old heuristic pass:'
-Write-Host '  * actual Beta 1.7.3 terrain + surface + caves are generated'
-Write-Host '  * actual Beta population is run (trees, ores, dungeons, springs, etc.)'
-Write-Host '  * scheduled liquid updates are advanced before checking waterfalls'
-Write-Host '  * the actual post-population floating component is traced again'
-Write-Host ''
-Write-Host 'Primary outputs are deliberately SEPARATE:'
+Write-Host 'Actual Beta 1.7.3 terrain/population is run in memory.'
+Write-Host 'Primary outputs remain deliberately SEPARATE:'
 Write-Host '  tree_spawns.csv'
 Write-Host '  tree_at_0_0.csv'
 Write-Host '  good_skyblock_islands.csv'
@@ -115,15 +120,40 @@ Write-Host '  waterfalls.csv'
 Write-Host '  lavafalls.csv'
 Write-Host '  water_and_lava_falls.csv'
 Write-Host ''
-Write-Host 'No tree/fluid bonus is used in the SkyBlock-island score.'
-Write-Host 'No tree is required to appear in the waterfall/lavafall lists.'
-Write-Host 'The master file appends after every seed, so rerunning resumes automatically.'
+Write-Host 'V2 fixes the missing /lang resources that caused BiomeGenBase initialization to fail.'
+Write-Host 'It also performs a one-seed preflight before touching the full dataset.'
 Write-Host "Input=$input"
 Write-Host "Output=$out"
 Write-Host "ChunkRadius=$ChunkRadius IsolationRadius=$IsolationRadius LiquidTicks=$LiquidTicks MaxSeeds=$MaxSeeds"
 Write-Host ''
 
 $cp = "$classes;$betaBin"
+
+# Fail fast on JVM/bootstrap/classpath problems instead of silently producing empty lists.
+$preflight = Join-Path $build 'preflight-output-v2'
+Remove-Item -Recurse -Force $preflight -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force -Path $preflight | Out-Null
+Write-Host 'Running one-seed exact-generation preflight...'
+& $java '-Xmx4G' '-Djava.awt.headless=true' -cp $cp net.minecraft.src.Beta173SkyblockOracle `
+    --input $input `
+    --output $preflight `
+    --chunk-radius $ChunkRadius `
+    --isolation-radius $IsolationRadius `
+    --liquid-ticks $LiquidTicks `
+    --max-seeds 1 `
+    --progress-every 1
+if ($LASTEXITCODE -ne 0) { throw 'Exact Beta SkyBlock oracle preflight process failed.' }
+$preflightMaster = Join-Path $preflight 'actual_features_all.csv'
+if (-not (Test-Path $preflightMaster -PathType Leaf)) { throw 'Preflight did not create actual_features_all.csv.' }
+$preflightRow = Import-Csv -LiteralPath $preflightMaster | Select-Object -First 1
+if ($null -eq $preflightRow) { throw 'Preflight produced no result row.' }
+if ($preflightRow.status -ne 'OK') {
+    throw "Exact Beta preflight failed: status=$($preflightRow.status) seed=$($preflightRow.seed) error=$($preflightRow.error)"
+}
+Write-Host "PRECHECK OK seed=$($preflightRow.seed) floating=$($preflightRow.floating) foot=$($preflightRow.footprint) tree=$($preflightRow.tree_count) water=$($preflightRow.waterfall) lava=$($preflightRow.lavafall)"
+Remove-Item -Recurse -Force $preflight -ErrorAction SilentlyContinue
+Write-Host ''
+
 & $java '-Xmx4G' '-Djava.awt.headless=true' -cp $cp net.minecraft.src.Beta173SkyblockOracle `
     --input $input `
     --output $out `
@@ -135,6 +165,15 @@ $cp = "$classes;$betaBin"
 if ($LASTEXITCODE -ne 0) { throw 'Exact Beta SkyBlock oracle failed.' }
 
 Write-Host ''
+$master = Join-Path $out 'actual_features_all.csv'
+if (Test-Path $master -PathType Leaf) {
+    $rows = Import-Csv -LiteralPath $master
+    Write-Host 'STATUS COUNTS:'
+    $rows | Group-Object status | Sort-Object Count -Descending | Format-Table Count,Name -AutoSize
+    $okCount = @($rows | Where-Object status -eq 'OK').Count
+    if ($okCount -eq 0) { throw 'Oracle finished with zero OK rows; refusing to present empty feature lists as real results.' }
+}
+
 $summary = Join-Path $out 'EXACT_SUMMARY.txt'
 if (Test-Path $summary) { Get-Content -LiteralPath $summary }
 Write-Host ''
