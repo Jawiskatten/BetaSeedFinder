@@ -16,10 +16,10 @@ $files = @(
 )
 
 foreach ($rel in $files) {
-    $dest = Join-Path $root ($rel -replace '/', '\')
+    $dest = Join-Path $root ($rel -replace '/', '\\')
     $dir = Split-Path -Parent $dest
     if ($dir) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
-    $url = "$base/$rel?v=p5prod1"
+    $url = "${base}/$($rel)?v=p5prod2"
     Write-Host "Downloading $rel"
     Invoke-WebRequest -UseBasicParsing $url -OutFile $dest
 }
