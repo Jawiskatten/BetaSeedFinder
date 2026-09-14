@@ -166,15 +166,25 @@ private:
         const double dx=(0.5-cx)/hr, dz=(0.5-cz)/hr;
         if (dx*dx+dz*dz>=1.0) return;
         bool sawGrass=false;
-        for (int y=maxY-1;y>=minY;--y) {
-            const double dy=(static_cast<double>(y)+0.5-cy)/vr;
+        // Beta MapGenCaves' decompiled loop uses var48 for the ellipsoid Y test,
+        // but reads/writes byte-array index var46 initialized to var36. Since
+        // var48 starts at var36-1, the block actually modified is var48+1.
+        // The old simulator wrote at var48 directly, making every cave one block
+        // too low and overestimating sand-wake freefall by exactly one block.
+        for (int geomY=maxY-1;geomY>=minY;--geomY) {
+            const double dy=(static_cast<double>(geomY)+0.5-cy)/vr;
             if (dy<=-0.7 || dx*dx+dy*dy+dz*dz>=1.0) continue;
-            int& id=origin_[static_cast<std::size_t>(y)];
+            const int blockY=geomY+1;
+            if (blockY<0 || blockY>=128) continue;
+            int& id=origin_[static_cast<std::size_t>(blockY)];
             if (id==GRASS) sawGrass=true;
             if (id==STONE || id==DIRT || id==GRASS) {
-                id = y<10 ? LAVA_MOVING : AIR;
-                if (std::find(carved_.begin(),carved_.end(),y)==carved_.end()) carved_.push_back(y);
-                if (sawGrass && y>0 && origin_[static_cast<std::size_t>(y-1)]==DIRT) origin_[static_cast<std::size_t>(y-1)]=GRASS;
+                // Vanilla's lava threshold is tested against var48 (geomY),
+                // even though the write goes to var46 (blockY).
+                id = geomY<10 ? LAVA_MOVING : AIR;
+                if (std::find(carved_.begin(),carved_.end(),blockY)==carved_.end()) carved_.push_back(blockY);
+                if (sawGrass && blockY>0 && origin_[static_cast<std::size_t>(blockY-1)]==DIRT)
+                    origin_[static_cast<std::size_t>(blockY-1)]=GRASS;
             }
         }
     }
