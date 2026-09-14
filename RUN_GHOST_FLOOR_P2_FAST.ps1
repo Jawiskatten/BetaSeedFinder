@@ -6,15 +6,15 @@ param(
     [ValidateRange(100000,1000000000)][UInt64]$ScoutChunk = 10000000,
     [ValidateRange(256,32768)][int]$Batch = 32768,
     [ValidateSet(64,128,256)][int]$TerrainThreads = 64,
-    [ValidateRange(1,64)][int]$MinDrop = 3,
+    [ValidateRange(1,64)][int]$MinDrop = 15,
     [switch]$Resume
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $ProjectRoot = $PSScriptRoot
-# Dependency snapshot: P1 GPU scout + fast four-chunk prefilter + full client oracle.
-$BranchRef = 'cb6371c3d2966c63fe4734a12cb2bab2ff517e54'
+# Dependency snapshot: P1 GPU scout + SOLID-only four-chunk prefilter + full client oracle.
+$BranchRef = '9fe4de547eda5e181bbee2cc5940066a97ef2949'
 $RawBase = "https://raw.githubusercontent.com/Jawiskatten/BetaSeedFinder/$BranchRef"
 $BetaCommit = '740c583901e1ff1150e9ef37e37dab5bc0e4f807'
 
@@ -48,7 +48,7 @@ Invoke-WebRequest -UseBasicParsing "$RawBase/tools/Beta173GhostFloorOracle.java"
 
 # Same exact GPU terrain setup as P1. P2's speedup is downstream: the full
 # 289-chunk client startup is now run only after an exact four-chunk cave/lake
-# prefilter proves a meaningful unsupported drop is plausible.
+# prefilter proves a deep SOLID landing is plausible.
 $baseGenerated = Prepare-SkyblockP14LatticeHeaders $ProjectRoot $nativeSourceDir 'full' 4
 foreach ($name in @('coarse_exact_core.hpp','coarse_exact_gpu.hpp','skyblock_p14_config.hpp')) {
     Copy-Item -Force (Join-Path $baseGenerated $name) (Join-Path $genDir $name)
@@ -142,7 +142,7 @@ if (-not (Test-Path (Join-Path $betaBin 'net\minecraft\src\World.class') -PathTy
 
 Remove-Item -Recurse -Force $classes -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $classes | Out-Null
-Write-Host 'Compiling fast four-chunk prefilter + full Beta CLIENT startup verifier...'
+Write-Host 'Compiling SOLID-only fast prefilter + full Beta CLIENT startup verifier...'
 & $javac -source 8 -target 8 -encoding UTF-8 -cp $betaBin -d $classes $prefilterSource $oracleSource
 if ($LASTEXITCODE -ne 0) { throw 'Ghost-floor Java verifier compilation failed.' }
 
@@ -197,13 +197,13 @@ if ($Resume) {
 
 Write-Host ''
 Write-Host '=================================================================='
-Write-Host ' BETA 1.7.3 GHOST FLOOR / FREEFALL P2 FAST'
+Write-Host ' BETA 1.7.3 GHOST FLOOR / FREEFALL P2 FAST - SOLID ONLY'
 Write-Host '=================================================================='
 Write-Host 'GPU: same ~1.4M/s exact lake + sand-gate scout as P1.'
 Write-Host 'FAST JAVA: only 4 exact Beta chunks; caves included; isolates population (-1,-1).'
-Write-Host 'FULL JAVA: 17x17 client Building-terrain startup ONLY for proven drop candidates.'
+Write-Host 'FULL JAVA: 17x17 client Building-terrain startup ONLY for proven SOLID-drop candidates.'
 Write-Host 'Wet lake masks are discarded before any Java world generation.'
-Write-Host "Full-startup shortlist threshold: >= $MinDrop block post-pop drop"
+Write-Host "Full-startup shortlist: first obstacle SOLID and drop >= $MinDrop blocks"
 Write-Host "Output=$output"
 Write-Host "Count=$Count StartIndex=$StartIndex Completed=$completed RandomKey=$RandomKey Batch=$Batch"
 Write-Host ''
@@ -224,7 +224,7 @@ while($completed -lt $Count) {
     Write-Host "GPU predicted gate-carve candidates: $candidateCount"
 
     if ($candidateCount -gt 0) {
-        Write-Host 'Running FAST exact 4-chunk cave + isolated lake prefilter...'
+        Write-Host 'Running FAST exact 4-chunk cave + isolated lake prefilter (SOLID landing required)...'
         & $java '-Xmx2G' '-Djava.awt.headless=true' -cp $cp net.minecraft.src.Beta173GhostFloorFastPrefilter `
             --input $candidateFile --output $prefilterDir --min-drop $MinDrop --progress-every 100
         if ($LASTEXITCODE -ne 0) { throw "Fast ghost-floor prefilter failed at start=$index" }
@@ -234,10 +234,10 @@ while($completed -lt $Count) {
         $shortlistFile = Join-Path $prefilterDir ("shortlist_{0}.csv" -f $index)
         if (-not (Test-Path $shortlistFile -PathType Leaf)) { throw "Fast prefilter did not create $shortlistFile" }
         $shortlistCount = [Math]::Max(0,(Get-Content $shortlistFile | Measure-Object -Line).Lines-1)
-        Write-Host "FULL client-startup shortlist in chunk: $shortlistCount"
+        Write-Host "FULL client-startup SOLID shortlist in chunk: $shortlistCount"
 
         if ($shortlistCount -gt 0) {
-            Write-Host 'Running authoritative Beta CLIENT 17x17 startup verifier on shortlist...'
+            Write-Host 'Running authoritative Beta CLIENT 17x17 startup verifier on SOLID shortlist...'
             & $java '-Xmx4G' '-Djava.awt.headless=true' -cp $cp net.minecraft.src.Beta173GhostFloorOracle `
                 --input $shortlistFile --output $verifyDir --progress-every 1
             if ($LASTEXITCODE -ne 0) { throw "Full ghost-floor verifier failed at start=$index" }
@@ -248,7 +248,7 @@ while($completed -lt $Count) {
 
     $completed += $n
     @(
-        'VERSION=GhostFloorP2Fast'
+        'VERSION=GhostFloorP2FastSolid'
         "START_INDEX=$StartIndex"
         "COUNT=$Count"
         "COMPLETED=$completed"
