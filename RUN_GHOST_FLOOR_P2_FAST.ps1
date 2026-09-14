@@ -13,8 +13,8 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $ProjectRoot = $PSScriptRoot
-# Dependency snapshot: P1 GPU scout + SOLID-only four-chunk prefilter + full client oracle.
-$BranchRef = '9fe4de547eda5e181bbee2cc5940066a97ef2949'
+# Dependency snapshot: P1 GPU scout + SOLID-only four-chunk prefilter with live best-drop tracking + full client oracle.
+$BranchRef = 'c19fb0b3dd12c62caa06d901fad6d01309a17436'
 $RawBase = "https://raw.githubusercontent.com/Jawiskatten/BetaSeedFinder/$BranchRef"
 $BetaCommit = '740c583901e1ff1150e9ef37e37dab5bc0e4f807'
 
@@ -204,6 +204,7 @@ Write-Host 'FAST JAVA: only 4 exact Beta chunks; caves included; isolates popula
 Write-Host 'FULL JAVA: 17x17 client Building-terrain startup ONLY for proven SOLID-drop candidates.'
 Write-Host 'Wet lake masks are discarded before any Java world generation.'
 Write-Host "Full-startup shortlist: first obstacle SOLID and drop >= $MinDrop blocks"
+Write-Host 'Live prefilter progress reports the exact current best SOLID drop + seed.'
 Write-Host "Output=$output"
 Write-Host "Count=$Count StartIndex=$StartIndex Completed=$completed RandomKey=$RandomKey Batch=$Batch"
 Write-Host ''
