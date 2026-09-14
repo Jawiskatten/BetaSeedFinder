@@ -43,7 +43,10 @@ $invoke = @{
     MinDrop = $MinDrop
     Resume = [bool]$Resume
 }
-if ($RandomKey.HasValue) { $invoke.RandomKey = [UInt64]$RandomKey.Value }
+# PowerShell boxes Nullable[T] differently depending on whether a value was
+# supplied. Under StrictMode, an omitted nullable can be plain $null and has no
+# .HasValue property, so test against $null instead of dereferencing it.
+if ($null -ne $RandomKey) { $invoke.RandomKey = [UInt64]$RandomKey }
 
 & $basePath @invoke
 exit $LASTEXITCODE
