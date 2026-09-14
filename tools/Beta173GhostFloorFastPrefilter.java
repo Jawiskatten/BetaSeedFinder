@@ -325,6 +325,9 @@ public final class Beta173GhostFloorFastPrefilter {
         long start = System.nanoTime();
         int total = 0, dry = 0, exact = 0, moved = 0, gateDestroyed = 0;
         int solid3 = 0, solid10 = 0, solid20 = 0, shortlisted = 0, errors = 0;
+        double bestSolidDrop = -1.0;
+        long bestSolidSeed = 0L;
+        int bestSolidFloorY = -1;
 
         for (Candidate c : input.rows) {
             ++total;
@@ -338,6 +341,14 @@ public final class Beta173GhostFloorFastPrefilter {
             if (solidLanding && r.post.drop >= 3.0) ++solid3;
             if (solidLanding && r.post.drop >= 10.0) ++solid10;
             if (solidLanding && r.post.drop >= 20.0) ++solid20;
+            if (solidLanding && r.post.drop > bestSolidDrop) {
+                bestSolidDrop = r.post.drop;
+                bestSolidSeed = c.seed;
+                bestSolidFloorY = r.post.y;
+                System.out.println("NEW BEST SOLID DROP seed=" + bestSolidSeed +
+                    " drop=" + f2(bestSolidDrop) + " feet=" + r.postFeetY +
+                    " floorY=" + bestSolidFloorY);
+            }
             if (r.shortlist) {
                 ++shortlisted;
                 shortlist.println(c.rawLine);
@@ -350,10 +361,13 @@ public final class Beta173GhostFloorFastPrefilter {
 
             if (cfg.progressEvery > 0 && total % cfg.progressEvery == 0) {
                 double sec = (System.nanoTime() - start) / 1.0e9;
+                String best = bestSolidDrop >= 0.0
+                    ? f2(bestSolidDrop) + " seed=" + bestSolidSeed + " floorY=" + bestSolidFloorY
+                    : "none";
                 System.out.println("fast-prefilter progress rows=" + total + "/" + input.rows.size() +
                     " rate=" + f2(total / Math.max(0.001, sec)) + "/s" +
                     " dry=" + dry + " exact=" + exact + " gateDestroyed=" + gateDestroyed +
-                    " solid3=" + solid3 + " shortlist=" + shortlisted);
+                    " bestSolidDrop=" + best + " shortlist=" + shortlisted);
             }
         }
         results.close();
@@ -370,6 +384,11 @@ public final class Beta173GhostFloorFastPrefilter {
         s.println("Gate destroyed + SOLID drop >=3: " + solid3);
         s.println("Gate destroyed + SOLID drop >=10: " + solid10);
         s.println("Gate destroyed + SOLID drop >=20: " + solid20);
+        if (bestSolidDrop >= 0.0) {
+            s.println("Best SOLID drop: " + f2(bestSolidDrop) + " blocks seed=" + bestSolidSeed + " floorY=" + bestSolidFloorY);
+        } else {
+            s.println("Best SOLID drop: none");
+        }
         s.println("Shortlisted for full client startup (SOLID drop >=" + f2(cfg.minDrop) + "): " + shortlisted);
         s.println("Errors: " + errors);
         s.println("Elapsed: " + f2(sec) + " s");
@@ -377,9 +396,12 @@ public final class Beta173GhostFloorFastPrefilter {
         s.println("Shortlist: " + shortlistFile.getAbsolutePath());
         s.close();
 
+        String best = bestSolidDrop >= 0.0
+            ? f2(bestSolidDrop) + " seed=" + bestSolidSeed + " floorY=" + bestSolidFloorY
+            : "none";
         System.out.println("FAST PREFILTER DONE rows=" + total + " dry=" + dry + " exact=" + exact +
-            " gateDestroyed=" + gateDestroyed + " solid3=" + solid3 + " solid10=" + solid10 +
-            " solid20=" + solid20 + " shortlist=" + shortlisted + " elapsed=" + f2(sec) + "s");
+            " gateDestroyed=" + gateDestroyed + " bestSolidDrop=" + best +
+            " shortlist=" + shortlisted + " elapsed=" + f2(sec) + "s");
         System.out.println("SHORTLIST=" + shortlistFile.getAbsolutePath());
     }
 }
