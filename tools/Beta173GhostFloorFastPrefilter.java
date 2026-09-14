@@ -22,10 +22,10 @@ import java.util.Map;
  * real Beta cave generator. Loading the final chunk causes exactly (-1,-1)
  * to populate; an explicit populate call is then an idempotent safety net.
  *
- * Candidates are shortlisted only when the original spawn-gate sand is gone
- * and the resulting origin-column fall to the first collision/liquid obstacle
- * is at least --min-drop blocks. The slower full client-startup oracle remains
- * authoritative for every shortlisted row.
+ * Candidates are shortlisted only when the original spawn-gate sand is gone,
+ * the first post-population obstacle below spawn is SOLID (not water/lava),
+ * and the resulting origin-column fall is at least --min-drop blocks. The
+ * slower full client-startup oracle remains authoritative for every shortlisted row.
  */
 public final class Beta173GhostFloorFastPrefilter {
     private static final int AIR = 0;
@@ -294,7 +294,7 @@ public final class Beta173GhostFloorFastPrefilter {
             r.gateDestroyed = r.postGateId != Block.sand.blockID;
             r.postFeetY = actualFeetY(world, 0, 0);
             r.post = firstObstacleBelow(world, 0, 0, r.postFeetY);
-            r.shortlist = r.gateDestroyed && r.post.drop >= minDrop;
+            r.shortlist = r.gateDestroyed && "SOLID".equals(r.post.type) && r.post.drop >= minDrop;
         } catch (Throwable t) {
             r.status = "ERROR";
             r.error = t.getClass().getName() + ": " + String.valueOf(t.getMessage());
@@ -324,7 +324,7 @@ public final class Beta173GhostFloorFastPrefilter {
 
         long start = System.nanoTime();
         int total = 0, dry = 0, exact = 0, moved = 0, gateDestroyed = 0;
-        int drop3 = 0, drop10 = 0, drop20 = 0, shortlisted = 0, errors = 0;
+        int solid3 = 0, solid10 = 0, solid20 = 0, shortlisted = 0, errors = 0;
 
         for (Candidate c : input.rows) {
             ++total;
@@ -334,14 +334,15 @@ public final class Beta173GhostFloorFastPrefilter {
             if ("SPAWN_MOVED".equals(r.status)) ++moved;
             if ("ERROR".equals(r.status)) ++errors;
             if (r.gateDestroyed) ++gateDestroyed;
-            if (r.post.drop >= 3.0 && r.gateDestroyed) ++drop3;
-            if (r.post.drop >= 10.0 && r.gateDestroyed) ++drop10;
-            if (r.post.drop >= 20.0 && r.gateDestroyed) ++drop20;
+            boolean solidLanding = r.gateDestroyed && "SOLID".equals(r.post.type);
+            if (solidLanding && r.post.drop >= 3.0) ++solid3;
+            if (solidLanding && r.post.drop >= 10.0) ++solid10;
+            if (solidLanding && r.post.drop >= 20.0) ++solid20;
             if (r.shortlist) {
                 ++shortlisted;
                 shortlist.println(c.rawLine);
                 shortlist.flush();
-                System.out.println("FAST HIT seed=" + c.seed + " gateY=" + r.preGateY +
+                System.out.println("FAST SOLID HIT seed=" + c.seed + " gateY=" + r.preGateY +
                     " gate " + r.preGateId + "->" + r.postGateId + " feet=" + r.postFeetY +
                     " drop=" + f2(r.post.drop) + " into=" + r.post.type);
             }
@@ -352,7 +353,7 @@ public final class Beta173GhostFloorFastPrefilter {
                 System.out.println("fast-prefilter progress rows=" + total + "/" + input.rows.size() +
                     " rate=" + f2(total / Math.max(0.001, sec)) + "/s" +
                     " dry=" + dry + " exact=" + exact + " gateDestroyed=" + gateDestroyed +
-                    " drop3=" + drop3 + " shortlist=" + shortlisted);
+                    " solid3=" + solid3 + " shortlist=" + shortlisted);
             }
         }
         results.close();
@@ -360,16 +361,16 @@ public final class Beta173GhostFloorFastPrefilter {
 
         double sec = (System.nanoTime() - start) / 1.0e9;
         PrintWriter s = new PrintWriter(new BufferedWriter(new FileWriter(summaryFile, false)));
-        s.println("BETA 1.7.3 GHOST FLOOR P2 FAST PREFILTER");
+        s.println("BETA 1.7.3 GHOST FLOOR P2 FAST PREFILTER - SOLID LANDING ONLY");
         s.println("Input GPU candidates: " + total);
         s.println("Dry-origin lake masks: " + dry);
         s.println("Exact four-chunk candidates run: " + exact);
         s.println("Spawn moved from 0,0: " + moved);
         s.println("Gate destroyed by isolated (-1,-1) population: " + gateDestroyed);
-        s.println("Gate destroyed + drop >=3: " + drop3);
-        s.println("Gate destroyed + drop >=10: " + drop10);
-        s.println("Gate destroyed + drop >=20: " + drop20);
-        s.println("Shortlisted for full client startup (drop >=" + f2(cfg.minDrop) + "): " + shortlisted);
+        s.println("Gate destroyed + SOLID drop >=3: " + solid3);
+        s.println("Gate destroyed + SOLID drop >=10: " + solid10);
+        s.println("Gate destroyed + SOLID drop >=20: " + solid20);
+        s.println("Shortlisted for full client startup (SOLID drop >=" + f2(cfg.minDrop) + "): " + shortlisted);
         s.println("Errors: " + errors);
         s.println("Elapsed: " + f2(sec) + " s");
         s.println("Rate over all input rows: " + f2(total / Math.max(0.001, sec)) + " rows/s");
@@ -377,8 +378,8 @@ public final class Beta173GhostFloorFastPrefilter {
         s.close();
 
         System.out.println("FAST PREFILTER DONE rows=" + total + " dry=" + dry + " exact=" + exact +
-            " gateDestroyed=" + gateDestroyed + " drop3=" + drop3 + " drop10=" + drop10 +
-            " drop20=" + drop20 + " shortlist=" + shortlisted + " elapsed=" + f2(sec) + "s");
+            " gateDestroyed=" + gateDestroyed + " solid3=" + solid3 + " solid10=" + solid10 +
+            " solid20=" + solid20 + " shortlist=" + shortlisted + " elapsed=" + f2(sec) + "s");
         System.out.println("SHORTLIST=" + shortlistFile.getAbsolutePath());
     }
 }
