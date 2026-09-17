@@ -31,6 +31,15 @@ if (-not (Test-Path $coverageFix -PathType Leaf)) {
 }
 & $coverageFix -ProjectRoot $root
 
+# P19 changes the exact objective from climate-only PLAINS connectivity to actual
+# connected DRY Plains land. Exact Beta 1.7.3 terrain density at y=63 removes
+# ocean/sea columns before the component flood fill. This patch is idempotent.
+$dryPatch = Join-Path $root 'scripts\patch-plains-component-p19-dry-connected.ps1'
+if (-not (Test-Path $dryPatch -PathType Leaf)) {
+    throw "Missing dry-Plains patch: $dryPatch"
+}
+& $dryPatch -ProjectRoot $root
+
 if ($Rebuild -or -not (Test-Path $exe -PathType Leaf)) {
     & (Join-Path $root 'scripts\build-plains-component-finder.ps1') -ProjectRoot $root
 }
@@ -56,7 +65,7 @@ if ($null -ne $VerifySeed) {
     $argsList += @('--verify-seed', [string]$VerifySeed)
 }
 
-Write-Host 'Plains component search: exact 800x800 square (-400..399), largest 4-neighbour-connected PLAINS area.' -ForegroundColor Cyan
+Write-Host 'Dry Plains search: exact 800x800 square (-400..399), largest 4-neighbour-connected PLAINS land area; ocean/sea water cannot connect it.' -ForegroundColor Cyan
 Write-Host "Batch=$Batch TopExact=$TopExact Center=($CenterX,$CenterZ)"
 
 Push-Location $root
