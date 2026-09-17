@@ -38,6 +38,15 @@ if (-not (Test-Path $dryPatch -PathType Leaf)) {
 }
 & $dryPatch -ProjectRoot $root
 
+# P21 had one C-style escaped quote inside a PowerShell double-quoted replacement
+# string. Fix that parser issue locally before invoking the P21 patch, then parse-
+# check the whole file. This helper is idempotent.
+$p21ParserFix = Join-Path $root 'scripts\fix-p21-powershell-parser.ps1'
+if (-not (Test-Path $p21ParserFix -PathType Leaf)) {
+    throw "Missing P21 parser fixer: $p21ParserFix"
+}
+& $p21ParserFix -ProjectRoot $root
+
 # P21 treats PLAINS + SEASONAL_FOREST as one allowed land region and ranks
 # connected components using both area and shape/compactness. It is idempotent.
 $shapePatch = Join-Path $root 'scripts\patch-plains-component-p21-plains-seasonal-shape.ps1'
