@@ -21,6 +21,16 @@ if (-not (Test-Path $source -PathType Leaf)) {
     & (Join-Path $root 'scripts\make-plains-component-finder.ps1') -ProjectRoot $root
 }
 
+# P18 is generated from a locally-patched P17 source. Some valid local histories
+# retain legacy runCoverage calls after the helper itself has disappeared. Patch
+# that generated source before every run/build; the fixer is idempotent and does
+# not change the connected-Plains objective.
+$coverageFix = Join-Path $root 'scripts\fix-plains-component-coverage-shim.ps1'
+if (-not (Test-Path $coverageFix -PathType Leaf)) {
+    throw "Missing Plains compatibility fixer: $coverageFix"
+}
+& $coverageFix -ProjectRoot $root
+
 if ($Rebuild -or -not (Test-Path $exe -PathType Leaf)) {
     & (Join-Path $root 'scripts\build-plains-component-finder.ps1') -ProjectRoot $root
 }
