@@ -23,18 +23,17 @@ if (-not (Test-Path $source -PathType Leaf)) {
 
 # P18 is generated from a locally-patched P17 source. Some valid local histories
 # retain legacy runCoverage calls after the helper itself has disappeared. Patch
-# that generated source before every run/build; the fixer is idempotent and does
-# not change the connected-Plains objective.
+# that generated source before every run/build; the fixer is idempotent.
 $coverageFix = Join-Path $root 'scripts\fix-plains-component-coverage-shim.ps1'
 if (-not (Test-Path $coverageFix -PathType Leaf)) {
     throw "Missing Plains compatibility fixer: $coverageFix"
 }
 & $coverageFix -ProjectRoot $root
 
-# P19 changes the exact objective from climate-only PLAINS connectivity to actual
-# connected DRY Plains land. Exact Beta 1.7.3 terrain density at y=63 removes
-# ocean/sea columns before the component flood fill. This patch is idempotent.
-$dryPatch = Join-Path $root 'scripts\patch-plains-component-p19-dry-connected.ps1'
+# P20 keeps the fast P18 biome scout but changes the exact record metric to one
+# connected DRY Plains landmass. It applies the validated Beta 1.7.3 terrain
+# density test at y=63 and removes ocean/sea columns before flood filling.
+$dryPatch = Join-Path $root 'scripts\patch-plains-component-p20-dry-mask.ps1'
 if (-not (Test-Path $dryPatch -PathType Leaf)) {
     throw "Missing dry-Plains patch: $dryPatch"
 }
