@@ -44,7 +44,7 @@ if (-not $text.Contains($includeNeedle)) {
 if (-not $text.Contains('#include "plains_dry_terrain.hpp"')) {
     $text = $text.Replace(
         $includeNeedle,
-        $includeNeedle + "`n#include \"plains_dry_terrain.hpp\""
+        $includeNeedle + "`n" + '#include "plains_dry_terrain.hpp"'
     )
 }
 
