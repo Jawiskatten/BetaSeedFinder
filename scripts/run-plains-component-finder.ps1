@@ -16,44 +16,38 @@ $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $exe = Join-Path $root 'build\native\amd\PlainsComponentFinder.exe'
 $source = Join-Path $root 'native\src\plains_component_finder.cpp'
+$generator = Join-Path $root 'scripts\make-plains-component-finder.ps1'
 
-if (-not (Test-Path $source -PathType Leaf)) {
-    & (Join-Path $root 'scripts\make-plains-component-finder.ps1') -ProjectRoot $root
+# P22 is generated directly now. This removes the fragile P21 self-patching
+# chain entirely. Rebuild always regenerates the dedicated Plains source; an old
+# P18/P20 source is also migrated automatically even without -Rebuild.
+$needGenerate = $Rebuild -or -not (Test-Path $source -PathType Leaf)
+if (-not $needGenerate) {
+    $existing = [System.IO.File]::ReadAllText($source)
+    $needGenerate = -not $existing.Contains('P22_PLAINS_SEASONAL_SHAPE')
+}
+if ($needGenerate) {
+    if (-not (Test-Path $generator -PathType Leaf)) {
+        throw "Missing Plains generator: $generator"
+    }
+    & $generator -ProjectRoot $root
 }
 
-# P18 is generated from a locally-patched P17 source. Some valid local histories
-# retain legacy runCoverage calls after the helper itself has disappeared. Patch
-# that generated source before every run/build; the fixer is idempotent.
+# Some valid local P17 histories retain legacy runCoverage calls after the helper
+# itself disappeared. Keep the small idempotent compatibility shim.
 $coverageFix = Join-Path $root 'scripts\fix-plains-component-coverage-shim.ps1'
 if (-not (Test-Path $coverageFix -PathType Leaf)) {
     throw "Missing Plains compatibility fixer: $coverageFix"
 }
 & $coverageFix -ProjectRoot $root
 
-# P20 applies the exact Beta 1.7.3 y=63 terrain mask. Ocean/sea columns are
-# removed before connected-component measurement, so water cannot act as a bridge.
+# Exact Beta 1.7.3 y=63 terrain mask: sea/ocean columns are removed before the
+# CPU component flood fill, so water cannot connect separate land masses.
 $dryPatch = Join-Path $root 'scripts\patch-plains-component-p20-dry-mask.ps1'
 if (-not (Test-Path $dryPatch -PathType Leaf)) {
-    throw "Missing dry-Plains patch: $dryPatch"
+    throw "Missing dry-land patch: $dryPatch"
 }
 & $dryPatch -ProjectRoot $root
-
-# P21 had one C-style escaped quote inside a PowerShell double-quoted replacement
-# string. Fix that parser issue locally before invoking the P21 patch, then parse-
-# check the whole file. This helper is idempotent.
-$p21ParserFix = Join-Path $root 'scripts\fix-p21-powershell-parser.ps1'
-if (-not (Test-Path $p21ParserFix -PathType Leaf)) {
-    throw "Missing P21 parser fixer: $p21ParserFix"
-}
-& $p21ParserFix -ProjectRoot $root
-
-# P21 treats PLAINS + SEASONAL_FOREST as one allowed land region and ranks
-# connected components using both area and shape/compactness. It is idempotent.
-$shapePatch = Join-Path $root 'scripts\patch-plains-component-p21-plains-seasonal-shape.ps1'
-if (-not (Test-Path $shapePatch -PathType Leaf)) {
-    throw "Missing Plains+Seasonal shape patch: $shapePatch"
-}
-& $shapePatch -ProjectRoot $root
 
 if ($Rebuild -or -not (Test-Path $exe -PathType Leaf)) {
     & (Join-Path $root 'scripts\build-plains-component-finder.ps1') -ProjectRoot $root
@@ -79,8 +73,9 @@ if ($null -ne $VerifySeed) {
     $argsList += @('--verify-seed', [string]$VerifySeed)
 }
 
-Write-Host 'Plains+Seasonal search: exact 800x800 square (-400..399), dry 4-neighbour PLAINS or SEASONAL_FOREST land, compactness-aware ranking.' -ForegroundColor Cyan
-Write-Host 'Shape score = connected area weighted by bbox fill + aspect ratio; ocean/sea water always breaks connectivity.'
+Write-Host 'P22 Plains+Seasonal search: exact 800x800 square (-400..399).' -ForegroundColor Cyan
+Write-Host 'Allowed connected land: PLAINS or SEASONAL_FOREST. Ocean/sea water breaks connectivity.'
+Write-Host 'Ranking: connected area weighted 70% base + up to 20% bbox fill + up to 10% aspect balance.'
 Write-Host "Batch=$Batch TopExact=$TopExact Center=($CenterX,$CenterZ)"
 
 Push-Location $root
