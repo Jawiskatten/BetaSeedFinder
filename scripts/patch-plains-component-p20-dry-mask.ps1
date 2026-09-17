@@ -72,9 +72,11 @@ $text = [regex]::Replace(
     1
 )
 
-# Make record/status semantics explicit.
+# Make record/status semantics explicit and keep new records out of the old
+# climate-only CSV so the two metrics can never be confused.
 $text = $text.Replace(' plainsArea=', ' dryPlainsArea=')
 $text = $text.Replace(' bestPlainsArea=', ' bestDryPlainsArea=')
+$text = $text.Replace('plains_component_hits.csv', 'dry_plains_component_hits.csv')
 $text = $text.Replace(
     'P18_LARGEST_PLAINS_400_SQUARE | 8x8 Plains connected scout | exact 4-neighbour 800x800 area | tuned 4x16',
     'P20_DRY_PLAINS_TERRAIN_MASK | 8x8 Plains biome scout | exact dry PLAINS land | 4-neighbour 800x800 area'
@@ -97,4 +99,5 @@ if (-not $verify.Contains('dryplains::applyExactDryMask')) {
 Write-Host 'Applied P20 connected DRY Plains metric.' -ForegroundColor Green
 Write-Host 'Exact records now require PLAINS biome + solid base terrain at y=63.'
 Write-Host 'Ocean/sea channels can no longer connect separate Plains land masses.'
+Write-Host 'New records use dry_plains_component_hits.csv; old climate-only records stay separate.'
 Write-Host 'Scout remains biome-only for speed; the exact record metric is dry-land connected area.'
