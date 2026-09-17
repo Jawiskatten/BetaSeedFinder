@@ -30,21 +30,27 @@ if (-not (Test-Path $coverageFix -PathType Leaf)) {
 }
 & $coverageFix -ProjectRoot $root
 
-# P20 keeps the fast P18 biome scout but changes the exact record metric to one
-# connected DRY Plains landmass. It applies the validated Beta 1.7.3 terrain
-# density test at y=63 and removes ocean/sea columns before flood filling.
+# P20 applies the exact Beta 1.7.3 y=63 terrain mask. Ocean/sea columns are
+# removed before connected-component measurement, so water cannot act as a bridge.
 $dryPatch = Join-Path $root 'scripts\patch-plains-component-p20-dry-mask.ps1'
 if (-not (Test-Path $dryPatch -PathType Leaf)) {
     throw "Missing dry-Plains patch: $dryPatch"
 }
 & $dryPatch -ProjectRoot $root
 
+# P21 treats PLAINS + SEASONAL_FOREST as one allowed land region and ranks
+# connected components using both area and shape/compactness. It is idempotent.
+$shapePatch = Join-Path $root 'scripts\patch-plains-component-p21-plains-seasonal-shape.ps1'
+if (-not (Test-Path $shapePatch -PathType Leaf)) {
+    throw "Missing Plains+Seasonal shape patch: $shapePatch"
+}
+& $shapePatch -ProjectRoot $root
+
 if ($Rebuild -or -not (Test-Path $exe -PathType Leaf)) {
     & (Join-Path $root 'scripts\build-plains-component-finder.ps1') -ProjectRoot $root
 }
 
-# Fixed objective for this finder: radius 400 square = 800x800 blocks,
-# coordinates [-400,+399] relative to the requested center.
+# Fixed objective: 800x800 square, X/Z -400..399 around the requested center.
 $argsList = @(
     '--target', '400',
     '--batch', [string]$Batch,
@@ -64,7 +70,8 @@ if ($null -ne $VerifySeed) {
     $argsList += @('--verify-seed', [string]$VerifySeed)
 }
 
-Write-Host 'Dry Plains search: exact 800x800 square (-400..399), largest 4-neighbour-connected PLAINS land area; ocean/sea water cannot connect it.' -ForegroundColor Cyan
+Write-Host 'Plains+Seasonal search: exact 800x800 square (-400..399), dry 4-neighbour PLAINS or SEASONAL_FOREST land, compactness-aware ranking.' -ForegroundColor Cyan
+Write-Host 'Shape score = connected area weighted by bbox fill + aspect ratio; ocean/sea water always breaks connectivity.'
 Write-Host "Batch=$Batch TopExact=$TopExact Center=($CenterX,$CenterZ)"
 
 Push-Location $root
