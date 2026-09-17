@@ -67,6 +67,69 @@ else {
     Write-Host 'P21 coarse-score matching is already structural.' -ForegroundColor DarkGray
 }
 
+# Same problem existed in the exact CPU flood-fill selection block. Depending on
+# which P17/P18 compatibility path generated the local source, comments or small
+# formatting differences can appear inside this otherwise-identical block. Make
+# P21 find the block structurally from the raw-area gate through the boundary
+# assignment instead of requiring byte-for-byte source text.
+$exactStart = $text.IndexOf('$oldExactSelect = @''')
+$exactEndNeedle = '$text = $text.Replace($oldExactSelect.TrimEnd(), $newExactSelect.TrimEnd())'
+if ($exactStart -ge 0) {
+    $exactEnd = $text.IndexOf($exactEndNeedle, $exactStart)
+    if ($exactEnd -lt 0) {
+        throw 'Found old P21 exact-selection patch start but not its end.'
+    }
+    $exactEnd += $exactEndNeedle.Length
+
+    $exactReplacement = @'
+$exactSelectPattern = '(?ms)^\s*if\s*\(\s*area\s*>\s*result\.safeRadius\s*\)\s*\{\s*\r?\n\s*result\.safeRadius\s*=\s*area;.*?\r?\n\s*result\.touchesBoundary\s*=\s*.*?\?\s*1\s*:\s*0;\s*\r?\n\s*\}'
+$exactSelectRegex = [regex]::new($exactSelectPattern)
+$exactSelectMatches = $exactSelectRegex.Matches($text)
+if ($exactSelectMatches.Count -ne 1) {
+    $nearby = [regex]::Match($text, '(?s).{0,220}if\s*\(\s*area\s*>\s*result\.safeRadius\s*\).*?.{0,700}')
+    $hint = if ($nearby.Success) { $nearby.Value.Replace("`r", ' ').Replace("`n", ' ') } else { '<not found>' }
+    throw "Expected exactly one structural P18/P20 exact component-selection block, found $($exactSelectMatches.Count). Nearby source: $hint"
+}
+$newExactSelect = @'
+        const int widthX = maxLX - minLX + 1;
+        const int heightZ = maxLZ - minLZ + 1;
+        const int bboxArea = widthX * heightZ;
+        const int fillPermille = bboxArea > 0 ? (area * 1000) / bboxArea : 0;
+        const int longSide = widthX > heightZ ? widthX : heightZ;
+        const int shortSide = widthX < heightZ ? widthX : heightZ;
+        const int aspectPermille = longSide > 0 ? (shortSide * 1000) / longSide : 0;
+        const int shapeWeight = 700 + fillPermille / 5 + aspectPermille / 10;
+        const int shapeScore = static_cast<int>(
+                (static_cast<long long>(area) * shapeWeight) / 1000LL);
+
+        if (shapeScore > result.firstMismatchD2 ||
+            (shapeScore == result.firstMismatchD2 && area > result.safeRadius)) {
+            result.safeRadius = area;              // actual connected block area
+            result.firstMismatchD2 = shapeScore;  // P21 record score
+            result.componentWidthX = widthX;
+            result.componentHeightZ = heightZ;
+            result.minX = centerX - target + minLX;
+            result.maxX = centerX - target + maxLX;
+            result.minZ = centerZ - target + minLZ;
+            result.maxZ = centerZ - target + maxLZ;
+            result.touchesBoundary =
+                    (minLX == 0 || maxLX == side - 1 ||
+                     minLZ == 0 || maxLZ == side - 1) ? 1 : 0;
+            result.measurementHalfSize = fillPermille;
+            result.expansionCount = aspectPermille;
+        }
+'@
+$text = $exactSelectRegex.Replace($text, $newExactSelect.TrimEnd(), 1)
+'@
+
+    $text = $text.Substring(0, $exactStart) + $exactReplacement.TrimEnd() + $text.Substring($exactEnd)
+    $changed = $true
+    Write-Host 'Made P21 exact component-selection matching structural.' -ForegroundColor Green
+}
+else {
+    Write-Host 'P21 exact component-selection matching is already structural.' -ForegroundColor DarkGray
+}
+
 if ($changed) {
     [System.IO.File]::WriteAllText(
         $p21Path,
