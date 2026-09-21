@@ -73,7 +73,8 @@ $p1Text = $p1Text.Replace($p1Main, $p1EmbeddedMain)
 $hotText = [IO.File]::ReadAllText($hotCpp)
 $includePattern = '(?m)^#define main tu4_components_p1_embedded_main\r?\n#include "\.\./tu4_floating_components/TU4FloatingComponents\.cpp"\r?\n#undef main\r?\n'
 if (-not [regex]::IsMatch($hotText, $includePattern)) { throw 'Could not locate P2 outer main-remap wrapper.' }
-$hotText = [regex]::Replace($hotText, $includePattern, "#include \"../tu4_floating_components/TU4FloatingComponents.cpp\"`r`n", 1)
+$replacement = '#include "../tu4_floating_components/TU4FloatingComponents.cpp"' + "`r`n"
+$hotText = [regex]::Replace($hotText, $includePattern, $replacement, 1)
 [IO.File]::WriteAllText($hotCpp, $hotText, [Text.UTF8Encoding]::new($false))
 Write-Host 'Applied P2 embedding fix: P1 entry point renamed locally; duplicate main removed.'
 
