@@ -58,6 +58,25 @@ Invoke-WebRequest -UseBasicParsing `
     "https://raw.githubusercontent.com/Jawiskatten/BetaSeedFinder/$sourceRef/native/tu4_floating_components/TU4FloatingComponents.cpp" `
     -OutFile $p1Cpp
 
+# P2 embeds the P1 implementation so it can reuse the exact packed-world
+# connectivity code. P1 itself already remaps HighestPillar's main while including
+# that dependency, so trying to remap P1's main with an outer macro gets clobbered.
+# Rename P1's actual entry point in the downloaded local copy, then include it
+# normally from P2. This avoids both the macro-redefinition warning and duplicate main.
+$p1Text = [IO.File]::ReadAllText($p1Cpp)
+$p1Main = 'int main(int argc,char**argv){'
+$p1EmbeddedMain = 'int tu4_components_p1_embedded_main(int argc,char**argv){'
+if (-not $p1Text.Contains($p1Main)) { throw 'Could not locate P1 main for P2 embedding patch.' }
+$p1Text = $p1Text.Replace($p1Main, $p1EmbeddedMain)
+[IO.File]::WriteAllText($p1Cpp, $p1Text, [Text.UTF8Encoding]::new($false))
+
+$hotText = [IO.File]::ReadAllText($hotCpp)
+$includePattern = '(?m)^#define main tu4_components_p1_embedded_main\r?\n#include "\.\./tu4_floating_components/TU4FloatingComponents\.cpp"\r?\n#undef main\r?\n'
+if (-not [regex]::IsMatch($hotText, $includePattern)) { throw 'Could not locate P2 outer main-remap wrapper.' }
+$hotText = [regex]::Replace($hotText, $includePattern, "#include \"../tu4_floating_components/TU4FloatingComponents.cpp\"`r`n", 1)
+[IO.File]::WriteAllText($hotCpp, $hotText, [Text.UTF8Encoding]::new($false))
+Write-Host 'Applied P2 embedding fix: P1 entry point renamed locally; duplicate main removed.'
+
 $highestLocal = Join-Path $root 'native\highest_pillar_spawn\HighestPillarSpawnGpuFinder.cpp'
 if (-not (Test-Path $highestLocal -PathType Leaf)) {
     $highestLocal = Join-Path $p1build 'source\native\highest_pillar_spawn\HighestPillarSpawnGpuFinder.cpp'
