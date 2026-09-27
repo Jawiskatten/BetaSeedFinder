@@ -30,9 +30,12 @@ jobs:
       - name: Smoke-test Beta 1.7.3 spawn-island finder
         shell: pwsh
         run: java -cp build/java/classes beta173.SpawnIslandFinder173 --start 0 --count 32 --threads 2 --max-radius 1
-      - name: Smoke-test Beta 1.7.3 dungeon-cluster finder
+      - name: Smoke-test Beta 1.7.3 dungeon parity trace
         shell: pwsh
-        run: java -cp build/java/classes beta173.DungeonClusterFinder173 --start 0 --count 32 --threads 2 --csv off
+        run: |
+          $trace = (java -cp build/java/classes beta173.DungeonClusterFinder173 --seed 9602 | Out-String)
+          if ($trace -notmatch 'dungeon attempt trace') { throw "dungeon parity trace missing`n$trace" }
+          if ($trace -notmatch 'rng48\[before=') { throw "RNG state trace missing`n$trace" }
       - name: Regression-test known detached candidates
         shell: pwsh
         run: |
