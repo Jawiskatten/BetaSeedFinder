@@ -25,7 +25,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * Goal: find multiple surviving dungeon rooms packed as tightly as possible,
  * using physical room geometry rather than the 16-block spawner activation range.
  *
- * Exactness scope:
+ * Validation status:
  *   - base terrain + biome surface + caves come from BetaChunk173
  *   - population RNG seeding matches ChunkProviderGenerate
  *   - water/lava lake passes immediately before dungeons are replayed
@@ -33,10 +33,13 @@ import java.util.concurrent.atomic.AtomicLong;
  *     by room size, mossy floors, chest placement/loot, and spawner type
  *   - later dungeon attempts may overwrite earlier rooms; final spawner survival is checked
  *
- * The search intentionally evaluates dungeons produced by ONE population chunk at a
- * time. That gives a deterministic, order-independent reference target for the eight
- * attempts belonging to that chunk. Cross-population-chunk megadungeons can be added
- * later with an explicit chunk-population order model.
+ * IMPORTANT: this class currently starts from an isolated pre-population 32x32 region.
+ * That is a useful reference oracle, but it is NOT yet validated as equivalent to a
+ * freshly generated vanilla Beta 1.7.3 world, because neighbouring population chunks
+ * can mutate shared chunks before this population chunk runs. A different early
+ * success/failure also changes the shared Random stream and therefore shifts later
+ * dungeon attempt coordinates. Long searches are gated behind
+ * --allow-unvalidated-search until parity is established.
  */
 public final class DungeonClusterFinder173 {
     private static final int H = BetaChunk173.WORLD_HEIGHT;
@@ -65,14 +68,33 @@ public final class DungeonClusterFinder173 {
         }
 
         if (config.singleSeed != null) {
-            BetaChunk173 generator = new BetaChunk173(config.singleSeed.longValue());
-            Analysis analysis = analyze(
-                    config.singleSeed.longValue(),
-                    config.populationChunkX,
-                    config.populationChunkZ,
-                    config.minDungeons,
-                    generator);
-            printAnalysis(analysis);
+            long seed = config.singleSeed.longValue();
+            BetaChunk173 generator = new BetaChunk173(seed);
+            if (config.scanRadius == 0) {
+                Analysis analysis = analyze(
+                        seed,
+                        config.populationChunkX,
+                        config.populationChunkZ,
+                        config.minDungeons,
+                        generator);
+                printAnalysis(analysis);
+            } else {
+                for (int chunkX = config.populationChunkX - config.scanRadius;
+                     chunkX <= config.populationChunkX + config.scanRadius; ++chunkX) {
+                    for (int chunkZ = config.populationChunkZ - config.scanRadius;
+                         chunkZ <= config.populationChunkZ + config.scanRadius; ++chunkZ) {
+                        Analysis analysis = analyze(seed, chunkX, chunkZ, config.minDungeons, generator);
+                        printAnalysis(analysis);
+                    }
+                }
+            }
+            return;
+        }
+
+        if (!config.allowUnvalidatedSearch) {
+            System.err.println("Long search is disabled: isolated population parity is not validated against a fresh vanilla Beta 1.7.3 world.");
+            System.err.println("Use --seed <seed> for parity tracing, or explicitly add --allow-unvalidated-search for research-only runs.");
+            System.exit(2);
             return;
         }
 
@@ -147,7 +169,7 @@ public final class DungeonClusterFinder173 {
                             int minDungeons, BetaChunk173 generator) {
         generator.reseed(seed);
         Region world = Region.generate(generator, populationChunkX, populationChunkZ);
-        Random random = new Random(seed);
+        TraceRandom random = new TraceRandom(seed);
 
         long oddX = random.nextLong() / 2L * 2L + 1L;
         long oddZ = random.nextLong() / 2L * 2L + 1L;
@@ -179,14 +201,19 @@ public final class DungeonClusterFinder173 {
             }
         }
 
+        List<DungeonAttempt> attempts = new ArrayList<>();
         List<DungeonRoom> generated = new ArrayList<>();
         for (int attempt = 0; attempt < 8; ++attempt) {
+            long stateBeforeCoords = random.state48();
             int x = baseX + random.nextInt(16) + 8;
             int y = random.nextInt(H);
             int z = baseZ + random.nextInt(16) + 8;
-            DungeonRoom room = tryGenerateDungeon(world, random, x, y, z, attempt);
-            if (room != null) {
-                generated.add(room);
+            long stateAfterCoords = random.state48();
+            DungeonAttempt dungeonAttempt = tryGenerateDungeon(
+                    world, random, x, y, z, attempt, stateBeforeCoords, stateAfterCoords);
+            attempts.add(dungeonAttempt);
+            if (dungeonAttempt.room != null) {
+                generated.add(dungeonAttempt.room);
             }
         }
 
@@ -214,16 +241,19 @@ public final class DungeonClusterFinder173 {
                 waterLakeGenerated,
                 lavaLakeAttempted,
                 lavaLakeGenerated,
+                attempts,
                 generated,
                 surviving,
                 bestClusters);
     }
 
-    private static DungeonRoom tryGenerateDungeon(
-            Region world, Random random, int centerX, int centerY, int centerZ, int attempt) {
+    private static DungeonAttempt tryGenerateDungeon(
+            Region world, TraceRandom random, int centerX, int centerY, int centerZ, int attempt,
+            long stateBeforeCoords, long stateAfterCoords) {
         final int roomHeight = 3;
         int halfX = random.nextInt(2) + 2;
         int halfZ = random.nextInt(2) + 2;
+        long stateAfterRoomSize = random.state48();
         int openings = 0;
 
         for (int x = centerX - halfX - 1; x <= centerX + halfX + 1; ++x) {
@@ -231,10 +261,16 @@ public final class DungeonClusterFinder173 {
                 for (int z = centerZ - halfZ - 1; z <= centerZ + halfZ + 1; ++z) {
                     int block = world.get(x, y, z);
                     if (y == centerY - 1 && !isBuildable(block)) {
-                        return null;
+                        return DungeonAttempt.failure(
+                                attempt, centerX, centerY, centerZ, halfX, halfZ, openings,
+                                "FLOOR_NOT_BUILDABLE", stateBeforeCoords, stateAfterCoords,
+                                stateAfterRoomSize, random.state48());
                     }
                     if (y == centerY + roomHeight + 1 && !isBuildable(block)) {
-                        return null;
+                        return DungeonAttempt.failure(
+                                attempt, centerX, centerY, centerZ, halfX, halfZ, openings,
+                                "CEILING_NOT_BUILDABLE", stateBeforeCoords, stateAfterCoords,
+                                stateAfterRoomSize, random.state48());
                     }
                     if ((x == centerX - halfX - 1
                             || x == centerX + halfX + 1
@@ -250,7 +286,10 @@ public final class DungeonClusterFinder173 {
         }
 
         if (openings < 1 || openings > 5) {
-            return null;
+            return DungeonAttempt.failure(
+                    attempt, centerX, centerY, centerZ, halfX, halfZ, openings,
+                    openings < 1 ? "NO_OPENING" : "TOO_MANY_OPENINGS",
+                    stateBeforeCoords, stateAfterCoords, stateAfterRoomSize, random.state48());
         }
 
         for (int x = centerX - halfX - 1; x <= centerX + halfX + 1; ++x) {
@@ -306,7 +345,7 @@ public final class DungeonClusterFinder173 {
         world.set(centerX, centerY, centerZ, SPAWNER);
         random.nextInt(4);
 
-        return new DungeonRoom(
+        DungeonRoom room = new DungeonRoom(
                 attempt,
                 centerX, centerY, centerZ,
                 halfX, halfZ, openings,
@@ -316,6 +355,8 @@ public final class DungeonClusterFinder173 {
                 centerY + roomHeight,
                 centerZ - halfZ - 1,
                 centerZ + halfZ + 1);
+        return DungeonAttempt.success(
+                room, stateBeforeCoords, stateAfterCoords, stateAfterRoomSize, random.state48());
     }
 
     private static boolean consumeRandomDungeonItem(Random random) {
@@ -521,19 +562,35 @@ public final class DungeonClusterFinder173 {
                 a.waterLakeAttempted, a.waterLakeGenerated,
                 a.lavaLakeAttempted, a.lavaLakeGenerated);
 
-        for (DungeonRoom room : a.generated) {
-            boolean survives = a.surviving.stream().anyMatch(r ->
-                    r.centerX == room.centerX && r.centerY == room.centerY && r.centerZ == room.centerZ);
-            System.out.printf(Locale.ROOT,
-                    "  attempt=%d spawner=(%d,%d,%d) room=%dx5x%d bbox=[%d..%d,%d..%d,%d..%d] openings=%d survives=%s%n",
-                    room.attempt,
-                    room.centerX, room.centerY, room.centerZ,
-                    room.maxX - room.minX + 1,
-                    room.maxZ - room.minZ + 1,
-                    room.minX, room.maxX,
-                    room.minY, room.maxY,
-                    room.minZ, room.maxZ,
-                    room.openings, survives);
+        System.out.println("  dungeon attempt trace (shared population RNG; one divergence shifts later coordinates):");
+        for (DungeonAttempt attempt : a.attempts) {
+            boolean survives = attempt.room != null && a.surviving.stream().anyMatch(r ->
+                    r.centerX == attempt.centerX && r.centerY == attempt.centerY && r.centerZ == attempt.centerZ);
+            if (attempt.room == null) {
+                System.out.printf(Locale.ROOT,
+                        "  attempt=%d candidate=(%d,%d,%d) half=(%d,%d) result=FAIL[%s] openings=%d "
+                                + "rng48[before=%012x coords=%012x size=%012x after=%012x]%n",
+                        attempt.attempt, attempt.centerX, attempt.centerY, attempt.centerZ,
+                        attempt.halfX, attempt.halfZ, attempt.failureReason, attempt.openings,
+                        attempt.stateBeforeCoords, attempt.stateAfterCoords,
+                        attempt.stateAfterRoomSize, attempt.stateAfterDungeon);
+            } else {
+                DungeonRoom room = attempt.room;
+                System.out.printf(Locale.ROOT,
+                        "  attempt=%d candidate=(%d,%d,%d) half=(%d,%d) result=SUCCESS "
+                                + "room=%dx5x%d bbox=[%d..%d,%d..%d,%d..%d] openings=%d survives=%s "
+                                + "rng48[before=%012x coords=%012x size=%012x after=%012x]%n",
+                        attempt.attempt, attempt.centerX, attempt.centerY, attempt.centerZ,
+                        attempt.halfX, attempt.halfZ,
+                        room.maxX - room.minX + 1,
+                        room.maxZ - room.minZ + 1,
+                        room.minX, room.maxX,
+                        room.minY, room.maxY,
+                        room.minZ, room.maxZ,
+                        room.openings, survives,
+                        attempt.stateBeforeCoords, attempt.stateAfterCoords,
+                        attempt.stateAfterRoomSize, attempt.stateAfterDungeon);
+            }
         }
 
         if (a.bestClusters.isEmpty()) {
@@ -599,11 +656,13 @@ public final class DungeonClusterFinder173 {
     private static void printUsage() {
         System.out.println("Beta 1.7.3 dungeon cluster finder");
         System.out.println();
-        System.out.println("Search one population chunk across world seeds:");
-        System.out.println("  java -cp build/java/classes beta173.DungeonClusterFinder173 --start 0 --count 1000000 --threads 16");
+        System.out.println("Research-only isolated search (explicit opt-in required):");
+        System.out.println("  java -cp build/java/classes beta173.DungeonClusterFinder173 --start 0 --count 1000000 --threads 16 --allow-unvalidated-search");
         System.out.println();
-        System.out.println("Verify one seed:");
-        System.out.println("  java -cp build/java/classes beta173.DungeonClusterFinder173 --seed 12345");
+        System.out.println("Parity-trace one seed:");
+        System.out.println("  java -cp build/java/classes beta173.DungeonClusterFinder173 --seed 501789");
+        System.out.println("Scan nearby population chunks for the same seed:");
+        System.out.println("  java -cp build/java/classes beta173.DungeonClusterFinder173 --seed 501789 --scan-chunks 1");
         System.out.println();
         System.out.println("Ranking is physical dungeon packing, not spawner activation range.");
         System.out.println("For each N independently: minimize worst room gap, maximize overlapping pairs,");
@@ -618,7 +677,9 @@ public final class DungeonClusterFinder173 {
         System.out.println("  --min-dungeons <int>    minimum cluster size to retain (default 2; 2..8)");
         System.out.println("  --top <int>             leaderboard entries per cluster size (default 20)");
         System.out.println("  --csv <path|off>        output CSV (default out/dungeon_cluster_results.csv)");
-        System.out.println("  --seed <long>           verify one seed only");
+        System.out.println("  --seed <long>           parity-trace one seed only");
+        System.out.println("  --scan-chunks <int>     with --seed, trace +/- radius population chunks (default 0; max 4)");
+        System.out.println("  --allow-unvalidated-search  explicitly enable isolated long searches");
         System.out.println("  --help                  show this text");
     }
 
@@ -630,6 +691,7 @@ public final class DungeonClusterFinder173 {
         final boolean waterLakeGenerated;
         final boolean lavaLakeAttempted;
         final boolean lavaLakeGenerated;
+        final List<DungeonAttempt> attempts;
         final List<DungeonRoom> generated;
         final List<DungeonRoom> surviving;
         final Map<Integer, Cluster> bestClusters;
@@ -637,6 +699,7 @@ public final class DungeonClusterFinder173 {
         Analysis(long seed, int populationChunkX, int populationChunkZ,
                  boolean waterLakeAttempted, boolean waterLakeGenerated,
                  boolean lavaLakeAttempted, boolean lavaLakeGenerated,
+                 List<DungeonAttempt> attempts,
                  List<DungeonRoom> generated, List<DungeonRoom> surviving,
                  Map<Integer, Cluster> bestClusters) {
             this.seed = seed;
@@ -646,9 +709,67 @@ public final class DungeonClusterFinder173 {
             this.waterLakeGenerated = waterLakeGenerated;
             this.lavaLakeAttempted = lavaLakeAttempted;
             this.lavaLakeGenerated = lavaLakeGenerated;
+            this.attempts = attempts;
             this.generated = generated;
             this.surviving = surviving;
             this.bestClusters = bestClusters;
+        }
+    }
+
+    static final class DungeonAttempt {
+        final int attempt;
+        final int centerX, centerY, centerZ;
+        final int halfX, halfZ;
+        final int openings;
+        final String failureReason;
+        final long stateBeforeCoords;
+        final long stateAfterCoords;
+        final long stateAfterRoomSize;
+        final long stateAfterDungeon;
+        final DungeonRoom room;
+
+        private DungeonAttempt(int attempt,
+                               int centerX, int centerY, int centerZ,
+                               int halfX, int halfZ, int openings,
+                               String failureReason,
+                               long stateBeforeCoords, long stateAfterCoords,
+                               long stateAfterRoomSize, long stateAfterDungeon,
+                               DungeonRoom room) {
+            this.attempt = attempt;
+            this.centerX = centerX;
+            this.centerY = centerY;
+            this.centerZ = centerZ;
+            this.halfX = halfX;
+            this.halfZ = halfZ;
+            this.openings = openings;
+            this.failureReason = failureReason;
+            this.stateBeforeCoords = stateBeforeCoords;
+            this.stateAfterCoords = stateAfterCoords;
+            this.stateAfterRoomSize = stateAfterRoomSize;
+            this.stateAfterDungeon = stateAfterDungeon;
+            this.room = room;
+        }
+
+        static DungeonAttempt failure(int attempt,
+                                      int centerX, int centerY, int centerZ,
+                                      int halfX, int halfZ, int openings,
+                                      String failureReason,
+                                      long stateBeforeCoords, long stateAfterCoords,
+                                      long stateAfterRoomSize, long stateAfterDungeon) {
+            return new DungeonAttempt(
+                    attempt, centerX, centerY, centerZ, halfX, halfZ, openings,
+                    failureReason, stateBeforeCoords, stateAfterCoords,
+                    stateAfterRoomSize, stateAfterDungeon, null);
+        }
+
+        static DungeonAttempt success(DungeonRoom room,
+                                      long stateBeforeCoords, long stateAfterCoords,
+                                      long stateAfterRoomSize, long stateAfterDungeon) {
+            return new DungeonAttempt(
+                    room.attempt, room.centerX, room.centerY, room.centerZ,
+                    room.halfX, room.halfZ, room.openings,
+                    null, stateBeforeCoords, stateAfterCoords,
+                    stateAfterRoomSize, stateAfterDungeon, room);
         }
     }
 
@@ -924,6 +1045,39 @@ public final class DungeonClusterFinder173 {
         }
     }
 
+    /**
+     * java.util.Random-compatible 48-bit LCG with exposed internal state for parity traces.
+     * Only methods inherited from Random are used by the generator; overriding next(int)
+     * preserves Java Random semantics while making cascade points observable.
+     */
+    private static final class TraceRandom extends Random {
+        private static final long serialVersionUID = 1L;
+        private static final long MULTIPLIER = 0x5DEECE66DL;
+        private static final long ADDEND = 0xBL;
+        private static final long MASK = (1L << 48) - 1L;
+        private long state;
+
+        TraceRandom(long seed) {
+            super(0L);
+            setSeed(seed);
+        }
+
+        @Override
+        public synchronized void setSeed(long seed) {
+            state = (seed ^ MULTIPLIER) & MASK;
+        }
+
+        @Override
+        protected synchronized int next(int bits) {
+            state = (state * MULTIPLIER + ADDEND) & MASK;
+            return (int) (state >>> (48 - bits));
+        }
+
+        synchronized long state48() {
+            return state;
+        }
+    }
+
     private static final class Config {
         long startSeed = 0L;
         long count = 100_000L;
@@ -932,8 +1086,10 @@ public final class DungeonClusterFinder173 {
         int populationChunkZ = 0;
         int minDungeons = 2;
         int top = 20;
+        int scanRadius = 0;
         Path csvPath = Paths.get("out", "dungeon_cluster_results.csv");
         Long singleSeed;
+        boolean allowUnvalidatedSearch;
         boolean help;
 
         static Config parse(String[] args) {
@@ -970,6 +1126,12 @@ public final class DungeonClusterFinder173 {
                     case "--seed":
                         c.singleSeed = Long.parseLong(requireValue(args, ++i, arg));
                         break;
+                    case "--scan-chunks":
+                        c.scanRadius = Integer.parseInt(requireValue(args, ++i, arg));
+                        break;
+                    case "--allow-unvalidated-search":
+                        c.allowUnvalidatedSearch = true;
+                        break;
                     case "--help":
                     case "-h":
                         c.help = true;
@@ -986,6 +1148,12 @@ public final class DungeonClusterFinder173 {
             }
             if (c.top < 1 || c.top > 10_000) {
                 throw new IllegalArgumentException("--top must be 1..10000");
+            }
+            if (c.scanRadius < 0 || c.scanRadius > 4) {
+                throw new IllegalArgumentException("--scan-chunks must be 0..4");
+            }
+            if (c.scanRadius != 0 && c.singleSeed == null) {
+                throw new IllegalArgumentException("--scan-chunks requires --seed");
             }
             return c;
         }
