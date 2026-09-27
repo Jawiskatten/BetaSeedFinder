@@ -36,6 +36,9 @@ jobs:
           $trace = (java -cp build/java/classes beta173.DungeonClusterFinder173 --seed 9602 | Out-String)
           if ($trace -notmatch 'dungeon attempt trace') { throw "dungeon parity trace missing`n$trace" }
           if ($trace -notmatch 'rng48\[before=') { throw "RNG state trace missing`n$trace" }
+      - name: Smoke-test Beta world dungeon auditor CLI
+        shell: pwsh
+        run: java -cp build/java/classes beta173.BetaWorldDungeonAudit173 --help
       - name: Regression-test known detached candidates
         shell: pwsh
         run: |
