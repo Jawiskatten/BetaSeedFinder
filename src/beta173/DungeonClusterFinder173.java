@@ -507,6 +507,12 @@ public final class DungeonClusterFinder173 {
             DungeonRoom[] selection, Cluster[] best) {
         if (selected == wanted) {
             Cluster cluster = Cluster.from(seed, populationChunkX, populationChunkZ, selection);
+            // User-facing target is a physical dungeon complex, not merely N dungeons
+            // that happen to exist in the same population chunk. Require the room
+            // boxes to form one graph through overlap or direct face/edge adjacency.
+            if (!cluster.roomGraphConnected) {
+                return;
+            }
             if (best[0] == null || Cluster.BEST_FIRST.compare(cluster, best[0]) < 0) {
                 best[0] = cluster;
             }
@@ -626,7 +632,7 @@ public final class DungeonClusterFinder173 {
         if (parent != null) Files.createDirectories(parent);
 
         StringBuilder out = new StringBuilder();
-        out.append("seed,pop_chunk_x,pop_chunk_z,count,max_room_gap_sq,max_room_gap,")
+        out.append("seed,pop_chunk_x,pop_chunk_z,count,room_graph_connected,spawner_y_span,max_room_gap_sq,max_room_gap,")
                 .append("sum_room_gap_sq,overlap_pairs,touch_pairs,cluster_x,cluster_y,cluster_z,")
                 .append("cluster_volume,max_spawner_dist_sq,max_spawner_dist,spawners\n");
 
@@ -635,6 +641,8 @@ public final class DungeonClusterFinder173 {
                     .append(c.populationChunkX).append(',')
                     .append(c.populationChunkZ).append(',')
                     .append(c.count).append(',')
+                    .append(c.roomGraphConnected).append(',')
+                    .append(c.spawnerYSpan).append(',')
                     .append(c.maxRoomGapSq).append(',')
                     .append(String.format(Locale.ROOT, "%.4f", Math.sqrt(c.maxRoomGapSq))).append(',')
                     .append(c.sumRoomGapSq).append(',')
@@ -665,7 +673,9 @@ public final class DungeonClusterFinder173 {
         System.out.println("  java -cp build/java/classes beta173.DungeonClusterFinder173 --seed 501789 --scan-chunks 1");
         System.out.println();
         System.out.println("Ranking is physical dungeon packing, not spawner activation range.");
-        System.out.println("For each N independently: minimize worst room gap, maximize overlapping pairs,");
+        System.out.println("Only room-graph CONNECTED clusters are retained: every room must join the same");
+        System.out.println("component through overlapping or directly adjacent dungeon bounding volumes.");
+        System.out.println("For each N independently: minimize worst room gap, then Y span, maximize overlaps,");
         System.out.println("then minimize cluster bounding volume and worst spawner distance.");
         System.out.println();
         System.out.println("Options:");
@@ -803,6 +813,7 @@ public final class DungeonClusterFinder173 {
     static final class Cluster {
         static final Comparator<Cluster> BEST_FIRST =
                 Comparator.comparingInt((Cluster c) -> c.maxRoomGapSq)
+                        .thenComparingInt(c -> c.spawnerYSpan)
                         .thenComparing(Comparator.comparingInt((Cluster c) -> c.overlapPairs).reversed())
                         .thenComparingLong(c -> c.clusterVolume)
                         .thenComparingInt(c -> c.maxSpawnerDistSq)
@@ -818,6 +829,8 @@ public final class DungeonClusterFinder173 {
         final int sumRoomGapSq;
         final int overlapPairs;
         final int touchPairs;
+        final boolean roomGraphConnected;
+        final int spawnerYSpan;
         final int clusterX, clusterY, clusterZ;
         final long clusterVolume;
         final int maxSpawnerDistSq;
@@ -826,6 +839,7 @@ public final class DungeonClusterFinder173 {
                 List<DungeonRoom> rooms,
                 int maxRoomGapSq, int sumRoomGapSq,
                 int overlapPairs, int touchPairs,
+                boolean roomGraphConnected, int spawnerYSpan,
                 int clusterX, int clusterY, int clusterZ,
                 long clusterVolume, int maxSpawnerDistSq) {
             this.seed = seed;
@@ -837,6 +851,8 @@ public final class DungeonClusterFinder173 {
             this.sumRoomGapSq = sumRoomGapSq;
             this.overlapPairs = overlapPairs;
             this.touchPairs = touchPairs;
+            this.roomGraphConnected = roomGraphConnected;
+            this.spawnerYSpan = spawnerYSpan;
             this.clusterX = clusterX;
             this.clusterY = clusterY;
             this.clusterZ = clusterZ;
@@ -855,6 +871,9 @@ public final class DungeonClusterFinder173 {
             int overlaps = 0;
             int touches = 0;
             int maxSpawnerSq = 0;
+            int minSpawnerY = Integer.MAX_VALUE;
+            int maxSpawnerY = Integer.MIN_VALUE;
+            boolean[][] linked = new boolean[rooms.size()][rooms.size()];
 
             for (DungeonRoom r : rooms) {
                 minX = Math.min(minX, r.minX);
@@ -863,6 +882,8 @@ public final class DungeonClusterFinder173 {
                 maxX = Math.max(maxX, r.maxX);
                 maxY = Math.max(maxY, r.maxY);
                 maxZ = Math.max(maxZ, r.maxZ);
+                minSpawnerY = Math.min(minSpawnerY, r.centerY);
+                maxSpawnerY = Math.max(maxSpawnerY, r.centerY);
             }
 
             for (int i = 0; i < rooms.size(); ++i) {
@@ -876,7 +897,11 @@ public final class DungeonClusterFinder173 {
                     int gapSq = gx * gx + gy * gy + gz * gz;
                     maxGapSq = Math.max(maxGapSq, gapSq);
                     sumGapSq += gapSq;
-                    if (gapSq == 0) ++touches;
+                    if (gapSq == 0) {
+                        ++touches;
+                        linked[i][j] = true;
+                        linked[j][i] = true;
+                    }
 
                     if (intervalsOverlap(a.minX, a.maxX, b.minX, b.maxX)
                             && intervalsOverlap(a.minY, a.maxY, b.minY, b.maxY)
@@ -892,6 +917,9 @@ public final class DungeonClusterFinder173 {
                 }
             }
 
+            boolean roomGraphConnected = isConnectedGraph(linked);
+            int spawnerYSpan = maxSpawnerY - minSpawnerY;
+
             int sizeX = maxX - minX + 1;
             int sizeY = maxY - minY + 1;
             int sizeZ = maxZ - minZ + 1;
@@ -900,7 +928,31 @@ public final class DungeonClusterFinder173 {
             return new Cluster(
                     seed, populationChunkX, populationChunkZ, rooms,
                     maxGapSq, sumGapSq, overlaps, touches,
+                    roomGraphConnected, spawnerYSpan,
                     sizeX, sizeY, sizeZ, volume, maxSpawnerSq);
+        }
+
+        private static boolean isConnectedGraph(boolean[][] linked) {
+            if (linked.length <= 1) return true;
+            boolean[] seen = new boolean[linked.length];
+            int[] queue = new int[linked.length];
+            int head = 0;
+            int tail = 0;
+            queue[tail++] = 0;
+            seen[0] = true;
+            int count = 1;
+
+            while (head < tail) {
+                int at = queue[head++];
+                for (int next = 0; next < linked.length; ++next) {
+                    if (linked[at][next] && !seen[next]) {
+                        seen[next] = true;
+                        queue[tail++] = next;
+                        ++count;
+                    }
+                }
+            }
+            return count == linked.length;
         }
 
         String spawnerList() {
@@ -916,9 +968,10 @@ public final class DungeonClusterFinder173 {
         String describe() {
             int pairs = count * (count - 1) / 2;
             return String.format(Locale.ROOT,
-                    "seed=%d N=%d roomGapMax=%.3f blocks overlapPairs=%d/%d touchPairs=%d/%d "
+                    "seed=%d N=%d roomGraph=%s ySpan=%d roomGapMax=%.3f blocks overlapPairs=%d/%d touchPairs=%d/%d "
                             + "cluster=%dx%dx%d volume=%d spawnerMax=%.3f spawners=%s",
-                    seed, count, Math.sqrt(maxRoomGapSq),
+                    seed, count, roomGraphConnected ? "CONNECTED" : "DISCONNECTED",
+                    spawnerYSpan, Math.sqrt(maxRoomGapSq),
                     overlapPairs, pairs, touchPairs, pairs,
                     clusterX, clusterY, clusterZ, clusterVolume,
                     Math.sqrt(maxSpawnerDistSq), spawnerList());
