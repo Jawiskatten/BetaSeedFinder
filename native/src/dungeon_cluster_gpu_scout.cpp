@@ -454,7 +454,43 @@ static void runSelfTest() {
     if (!hostNoLake(501789, 0, 0)) {
         throw std::runtime_error("self-test: seed 501789 should be in no-lake subset");
     }
-    std::cout << "SELF_TEST_OK no-lake population RNG gates match known traces\n";
+
+    ScoutHit* dHits = nullptr;
+    unsigned int* dCount = nullptr;
+    allocateArray(dHits, 1, "self-test hipMalloc hits");
+    allocateArray(dCount, 1, "self-test hipMalloc count");
+
+    auto checkSeed = [&](std::uint64_t seed, bool expectedHit) {
+        checkHip(hipMemset(dCount, 0, sizeof(unsigned int)), "self-test reset count");
+        hipLaunchKernelGGL(
+                scoutKernel, dim3(1), dim3(1), 0, 0,
+                seed, 1ULL, 0, 0, dHits, dCount);
+        checkHip(hipGetLastError(), "self-test launch");
+        checkHip(hipDeviceSynchronize(), "self-test synchronize");
+        unsigned int count = 0;
+        checkHip(hipMemcpy(&count, dCount, sizeof(count), hipMemcpyDeviceToHost),
+                 "self-test copy count");
+        const bool hit = count == 1;
+        if (hit != expectedHit) {
+            throw std::runtime_error(
+                    "self-test: unexpected GPU cave scout result for seed "
+                    + std::to_string(seed)
+                    + " expectedHit=" + (expectedHit ? "true" : "false")
+                    + " actualHit=" + (hit ? "true" : "false"));
+        }
+    };
+
+    // Known no-lake exact Java dungeon hits from the reference finder.
+    checkSeed(9602, true);
+    checkSeed(3426, true);
+    checkSeed(8908, true);
+    checkSeed(501789, true);
+    // Known water-lake-trigger seed; V1 intentionally excludes it.
+    checkSeed(180674, false);
+
+    checkHip(hipFree(dCount), "self-test free count");
+    checkHip(hipFree(dHits), "self-test free hits");
+    std::cout << "SELF_TEST_OK known dungeon cave hits retained; lake-trigger seed excluded\n";
 }
 
 } // namespace dungeon_cluster_gpu
