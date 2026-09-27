@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -296,80 +297,6 @@ __device__ __forceinline__ std::uint32_t simulateNode(
     return 0;
 }
 
-__device__ __forceinline__ std::uint32_t caveProximityMask(
-        std::int64_t seed,
-        int populationChunkX,
-        int populationChunkZ,
-        const RoomCandidate rooms[ATTEMPTS]) {
-    p20::JavaRandom master;
-    master.setSeed(seed);
-    const std::int64_t oddX = javaOddLong(javaNextLong(master));
-    const std::int64_t oddZ = javaOddLong(javaNextLong(master));
-
-    // Dungeon attempts from a population chunk live in its 2x2 generated chunk
-    // square. MapGenBase range=8 therefore needs this union source range.
-    const int minSourceX = populationChunkX - CAVE_RANGE;
-    const int maxSourceX = populationChunkX + 1 + CAVE_RANGE;
-    const int minSourceZ = populationChunkZ - CAVE_RANGE;
-    const int maxSourceZ = populationChunkZ + 1 + CAVE_RANGE;
-
-    std::uint32_t mask = 0;
-    for (int sourceX = minSourceX; sourceX <= maxSourceX; ++sourceX) {
-        for (int sourceZ = minSourceZ; sourceZ <= maxSourceZ; ++sourceZ) {
-            p20::JavaRandom random;
-            random.setSeed(javaLongMix(sourceX, oddX, sourceZ, oddZ, seed));
-
-            const int a = random.nextInt(40) + 1;
-            const int b = random.nextInt(a) + 1;
-            int count = random.nextInt(b);
-            if (random.nextInt(15) != 0) count = 0;
-
-            for (int cave = 0; cave < count; ++cave) {
-                const double x = static_cast<double>(sourceX * 16 + random.nextInt(16));
-                const double y = static_cast<double>(random.nextInt(random.nextInt(120) + 8));
-                const double z = static_cast<double>(sourceZ * 16 + random.nextInt(16));
-                int tunnels = 1;
-
-                if (random.nextInt(4) == 0) {
-                    CaveParams large{
-                        x, y, z,
-                        1.0f + nextFloat(random) * 6.0f,
-                        0.0f, 0.0f,
-                        -1, -1, 0.5
-                    };
-                    mask |= simulateNode(random, large, rooms);
-                    if (mask != 0) return mask;
-                    tunnels += random.nextInt(4);
-                }
-
-                for (int tunnel = 0; tunnel < tunnels; ++tunnel) {
-                    CaveParams p{
-                        x, y, z,
-                        nextFloat(random) * 2.0f + nextFloat(random),
-                        nextFloat(random) * PI * 2.0f,
-                        (nextFloat(random) - 0.5f) * 2.0f / 8.0f,
-                        0, 0, 1.0
-                    };
-                    // Parameter order above must match Beta: yaw, pitch, width.
-                    // Reassign explicitly to preserve that source order.
-                    const float width = p.width;
-                    const float yaw = p.yaw;
-                    const float pitch = p.pitch;
-                    p.width = width;
-                    p.yaw = yaw;
-                    p.pitch = pitch;
-
-                    mask |= simulateNode(random, p, rooms);
-                    if (mask != 0) return mask;
-                }
-            }
-        }
-    }
-    return mask;
-}
-
-// Separate helper because the initializer above is intentionally compact but
-// Beta's source consumes yaw, pitch, width in that exact order.
 __device__ __forceinline__ std::uint32_t caveProximityMaskExactParamOrder(
         std::int64_t seed,
         int populationChunkX,
