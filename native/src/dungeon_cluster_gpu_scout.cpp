@@ -186,16 +186,15 @@ __device__ __forceinline__ std::uint32_t simulateNoBranchNode(
     const bool gentlePitch = local.nextInt(6) == 0;
 
     for (; p.step < p.maxStep; ++p.step) {
-        const double s = std::sin(static_cast<double>(p.step) * static_cast<double>(PI)
-                                  / static_cast<double>(p.maxStep));
+        const double s = static_cast<double>(sinf(static_cast<float>(p.step) * PI / static_cast<float>(p.maxStep)));
         const double radiusXZ = 1.5 + s * static_cast<double>(p.width);
         const double radiusY = radiusXZ * p.verticalScale;
 
-        const float cosPitch = std::cos(p.pitch);
-        const float sinPitch = std::sin(p.pitch);
-        p.x += static_cast<double>(std::cos(p.yaw) * cosPitch);
+        const float cosPitch = cosf(p.pitch);
+        const float sinPitch = sinf(p.pitch);
+        p.x += static_cast<double>(cosf(p.yaw) * cosPitch);
         p.y += static_cast<double>(sinPitch);
-        p.z += static_cast<double>(std::sin(p.yaw) * cosPitch);
+        p.z += static_cast<double>(sinf(p.yaw) * cosPitch);
 
         if (gentlePitch) p.pitch *= 0.92f;
         else p.pitch *= 0.7f;
@@ -245,16 +244,15 @@ __device__ __forceinline__ std::uint32_t simulateNode(
     const bool gentlePitch = local.nextInt(6) == 0;
 
     for (; p.step < p.maxStep; ++p.step) {
-        const double s = std::sin(static_cast<double>(p.step) * static_cast<double>(PI)
-                                  / static_cast<double>(p.maxStep));
+        const double s = static_cast<double>(sinf(static_cast<float>(p.step) * PI / static_cast<float>(p.maxStep)));
         const double radiusXZ = 1.5 + s * static_cast<double>(p.width);
         const double radiusY = radiusXZ * p.verticalScale;
 
-        const float cosPitch = std::cos(p.pitch);
-        const float sinPitch = std::sin(p.pitch);
-        p.x += static_cast<double>(std::cos(p.yaw) * cosPitch);
+        const float cosPitch = cosf(p.pitch);
+        const float sinPitch = sinf(p.pitch);
+        p.x += static_cast<double>(cosf(p.yaw) * cosPitch);
         p.y += static_cast<double>(sinPitch);
-        p.z += static_cast<double>(std::sin(p.yaw) * cosPitch);
+        p.z += static_cast<double>(sinf(p.yaw) * cosPitch);
 
         if (gentlePitch) p.pitch *= 0.92f;
         else p.pitch *= 0.7f;
