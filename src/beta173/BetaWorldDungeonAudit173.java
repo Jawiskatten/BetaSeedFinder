@@ -193,11 +193,14 @@ public final class BetaWorldDungeonAudit173 {
 
         if (savedSeed != null && savedSeed.longValue() == seed) {
             System.out.println();
-            System.out.println("dungeon-relevant topology comparison against saved world:");
-            compareSuccessfulCandidateTopology(seed, regionDir, analysis);
+            System.out.println("saved-world note:");
+            System.out.println("  Exact surviving spawner coordinates are the parity oracle here.");
+            System.out.println("  Final saved AIR/LIQUID/BUILDABLE topology is NOT used to reconstruct");
+            System.out.println("  pre-dungeon validation openings, because successful dungeon generation");
+            System.out.println("  and later population features mutate those blocks after validation.");
         } else {
             System.out.println();
-            System.out.println("topology comparison skipped because the saved world seed was not verified equal to the requested seed.");
+            System.out.println("saved-world parity note skipped because the saved world seed was not verified equal to the requested seed.");
         }
     }
 
