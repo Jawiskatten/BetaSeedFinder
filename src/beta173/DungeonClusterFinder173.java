@@ -91,6 +91,11 @@ public final class DungeonClusterFinder173 {
             return;
         }
 
+        if (config.seedFile != null) {
+            verifySeedFile(config);
+            return;
+        }
+
         if (!config.allowUnvalidatedSearch) {
             System.err.println("Long search is disabled: isolated population parity is not validated against a fresh vanilla Beta 1.7.3 world.");
             System.err.println("Use --seed <seed> for parity tracing, or explicitly add --allow-unvalidated-search for research-only runs.");
@@ -99,6 +104,81 @@ public final class DungeonClusterFinder173 {
         }
 
         search(config);
+    }
+
+    private static void verifySeedFile(Config config) throws Exception {
+        List<Long> seeds = new ArrayList<>();
+        for (String raw : Files.readAllLines(config.seedFile, StandardCharsets.UTF_8)) {
+            String line = raw.trim();
+            if (line.isEmpty() || line.startsWith("#")) continue;
+            String first = line.split(",", 2)[0].trim();
+            if (first.equalsIgnoreCase("seed")) continue;
+            try {
+                seeds.add(Long.parseLong(first));
+            } catch (NumberFormatException ignored) {
+                // Allow scout metadata/header lines without turning verifier input into a fragile format.
+            }
+        }
+
+        if (seeds.isEmpty()) {
+            System.out.println("No candidate seeds in " + config.seedFile.toAbsolutePath());
+            return;
+        }
+
+        final AtomicLong cursor = new AtomicLong();
+        final AtomicLong processed = new AtomicLong();
+        final TopBoards boards = new TopBoards(config.minDungeons, 8, config.top);
+        final long started = System.nanoTime();
+
+        ExecutorService pool = Executors.newFixedThreadPool(config.threads);
+        for (int thread = 0; thread < config.threads; ++thread) {
+            pool.submit(() -> {
+                BetaChunk173 generator = new BetaChunk173(0L);
+                while (true) {
+                    long index = cursor.getAndIncrement();
+                    if (index >= seeds.size()) return;
+
+                    long seed = seeds.get((int) index);
+                    Analysis analysis = analyze(
+                            seed,
+                            config.populationChunkX,
+                            config.populationChunkZ,
+                            config.minDungeons,
+                            generator);
+                    for (Cluster cluster : analysis.bestClusters.values()) {
+                        boards.offer(cluster);
+                    }
+
+                    long done = processed.incrementAndGet();
+                    if ((done & 255L) == 0L || done == seeds.size()) {
+                        double seconds = (System.nanoTime() - started) / 1_000_000_000.0;
+                        double rate = seconds <= 0.0 ? 0.0 : done / seconds;
+                        synchronized (System.out) {
+                            System.out.printf(Locale.ROOT,
+                                    "verify progress=%d/%d rate=%.1f candidates/s best=%s%n",
+                                    done, seeds.size(), rate, boards.summary());
+                        }
+                    }
+                }
+            });
+        }
+
+        pool.shutdown();
+        pool.awaitTermination(Long.MAX_VALUE, TimeUnit.DAYS);
+
+        double seconds = (System.nanoTime() - started) / 1_000_000_000.0;
+        System.out.printf(Locale.ROOT,
+                "%nVERIFY DONE candidates=%d elapsed=%.3fs rate=%.1f candidates/s populationChunk=(%d,%d)%n",
+                processed.get(), seconds,
+                seconds <= 0.0 ? 0.0 : processed.get() / seconds,
+                config.populationChunkX, config.populationChunkZ);
+
+        List<Cluster> results = boards.allSorted();
+        printLeaderboard(results, config);
+        if (config.csvPath != null) {
+            writeCsv(results, config.csvPath);
+            System.out.println("CSV: " + config.csvPath.toAbsolutePath());
+        }
     }
 
     private static void search(Config config) throws Exception {
@@ -667,6 +747,9 @@ public final class DungeonClusterFinder173 {
         System.out.println("Research-only isolated search (explicit opt-in required):");
         System.out.println("  java -cp build/java/classes beta173.DungeonClusterFinder173 --start 0 --count 1000000 --threads 16 --allow-unvalidated-search");
         System.out.println();
+        System.out.println("Exact-verify a GPU scout candidate CSV:");
+        System.out.println("  java -cp build/java/classes beta173.DungeonClusterFinder173 --seed-file out\\dungeon_gpu_candidates.csv --threads 8");
+        System.out.println();
         System.out.println("Parity-trace one seed:");
         System.out.println("  java -cp build/java/classes beta173.DungeonClusterFinder173 --seed 501789");
         System.out.println("Scan nearby population chunks for the same seed:");
@@ -688,6 +771,7 @@ public final class DungeonClusterFinder173 {
         System.out.println("  --top <int>             leaderboard entries per cluster size (default 20)");
         System.out.println("  --csv <path|off>        output CSV (default out/dungeon_cluster_results.csv)");
         System.out.println("  --seed <long>           parity-trace one seed only");
+        System.out.println("  --seed-file <path>      exact-verify first CSV column as candidate seeds");
         System.out.println("  --scan-chunks <int>     with --seed, trace +/- radius population chunks (default 0; max 4)");
         System.out.println("  --allow-unvalidated-search  explicitly enable isolated long searches");
         System.out.println("  --help                  show this text");
@@ -1141,6 +1225,7 @@ public final class DungeonClusterFinder173 {
         int top = 20;
         int scanRadius = 0;
         Path csvPath = Paths.get("out", "dungeon_cluster_results.csv");
+        Path seedFile;
         Long singleSeed;
         boolean allowUnvalidatedSearch;
         boolean help;
@@ -1179,6 +1264,9 @@ public final class DungeonClusterFinder173 {
                     case "--seed":
                         c.singleSeed = Long.parseLong(requireValue(args, ++i, arg));
                         break;
+                    case "--seed-file":
+                        c.seedFile = Paths.get(requireValue(args, ++i, arg));
+                        break;
                     case "--scan-chunks":
                         c.scanRadius = Integer.parseInt(requireValue(args, ++i, arg));
                         break;
@@ -1207,6 +1295,12 @@ public final class DungeonClusterFinder173 {
             }
             if (c.scanRadius != 0 && c.singleSeed == null) {
                 throw new IllegalArgumentException("--scan-chunks requires --seed");
+            }
+            if (c.singleSeed != null && c.seedFile != null) {
+                throw new IllegalArgumentException("--seed and --seed-file are mutually exclusive");
+            }
+            if (c.seedFile != null && !Files.isRegularFile(c.seedFile)) {
+                throw new IllegalArgumentException("--seed-file not found: " + c.seedFile);
             }
             return c;
         }
