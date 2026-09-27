@@ -10,9 +10,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.InflaterInputStream;
@@ -54,6 +56,18 @@ public final class BetaWorldDungeonAudit173 {
         Path regionDir = resolveRegionDir(config.world);
         System.out.println("world=" + config.world.toAbsolutePath());
         System.out.println("regionDir=" + regionDir.toAbsolutePath());
+
+        Long savedSeed = readLevelSeed(config.world);
+        if (savedSeed == null) {
+            System.out.println("savedSeed=UNKNOWN (level.dat RandomSeed not found)");
+        } else {
+            System.out.println("savedSeed=" + savedSeed);
+        }
+        if (config.seed != null && savedSeed != null && savedSeed.longValue() != config.seed.longValue()) {
+            System.out.printf(Locale.ROOT,
+                    "SEED MISMATCH: requested=%d savedWorld=%d -- stop treating this save as a parity oracle for that requested seed.%n",
+                    config.seed.longValue(), savedSeed.longValue());
+        }
         System.out.printf(Locale.ROOT,
                 "scan centerChunk=(%d,%d) radius=%d%n",
                 config.centerChunkX, config.centerChunkZ, config.chunkRadius);
@@ -100,11 +114,12 @@ public final class BetaWorldDungeonAudit173 {
         }
 
         if (config.seed != null) {
-            comparePrediction(config, actual);
+            comparePrediction(config, regionDir, savedSeed, actual);
         }
     }
 
-    private static void comparePrediction(Config config, List<SpawnerPos> actual) {
+    private static void comparePrediction(
+            Config config, Path regionDir, Long savedSeed, List<SpawnerPos> actual) throws IOException {
         long seed = config.seed.longValue();
         BetaChunk173 generator = new BetaChunk173(seed);
         DungeonClusterFinder173.Analysis analysis = DungeonClusterFinder173.analyze(
@@ -174,6 +189,155 @@ public final class BetaWorldDungeonAudit173 {
             System.out.println("isolated predicted surviving spawners all exist in the saved world.");
         } else if (!predictedOnly.isEmpty()) {
             System.out.println("PARITY FAILURE: at least one isolated predicted spawner is absent from the saved world.");
+        }
+
+        if (savedSeed != null && savedSeed.longValue() == seed) {
+            System.out.println();
+            System.out.println("dungeon-relevant topology comparison against saved world:");
+            compareSuccessfulCandidateTopology(seed, regionDir, analysis);
+        } else {
+            System.out.println();
+            System.out.println("topology comparison skipped because the saved world seed was not verified equal to the requested seed.");
+        }
+    }
+
+    private static void compareSuccessfulCandidateTopology(
+            long seed, Path regionDir, DungeonClusterFinder173.Analysis analysis) throws IOException {
+        SavedWorld saved = new SavedWorld(regionDir);
+        PrePopulationWorld pre = new PrePopulationWorld(seed);
+
+        for (DungeonClusterFinder173.DungeonAttempt attempt : analysis.attempts) {
+            if (attempt.room == null) continue;
+
+            int minX = attempt.centerX - attempt.halfX - 1;
+            int maxX = attempt.centerX + attempt.halfX + 1;
+            int minZ = attempt.centerZ - attempt.halfZ - 1;
+            int maxZ = attempt.centerZ + attempt.halfZ + 1;
+            int floorY = attempt.centerY - 1;
+            int ceilingY = attempt.centerY + 4;
+
+            int compared = 0;
+            int categoryMismatch = 0;
+            int exactMismatch = 0;
+            int floorBuildableMismatch = 0;
+            int ceilingBuildableMismatch = 0;
+            int sideOpeningMismatch = 0;
+
+            List<String> firstMismatches = new ArrayList<>();
+
+            for (int x = minX; x <= maxX; ++x) {
+                for (int z = minZ; z <= maxZ; ++z) {
+                    int preFloor = pre.get(x, floorY, z);
+                    int savedFloor = saved.get(x, floorY, z);
+                    compared++;
+                    if (preFloor != savedFloor) exactMismatch++;
+                    if (dungeonCategory(preFloor) != dungeonCategory(savedFloor)) {
+                        categoryMismatch++;
+                        floorBuildableMismatch++;
+                        rememberMismatch(firstMismatches, x, floorY, z, preFloor, savedFloor);
+                    }
+
+                    int preCeiling = pre.get(x, ceilingY, z);
+                    int savedCeiling = saved.get(x, ceilingY, z);
+                    compared++;
+                    if (preCeiling != savedCeiling) exactMismatch++;
+                    if (dungeonCategory(preCeiling) != dungeonCategory(savedCeiling)) {
+                        categoryMismatch++;
+                        ceilingBuildableMismatch++;
+                        rememberMismatch(firstMismatches, x, ceilingY, z, preCeiling, savedCeiling);
+                    }
+                }
+            }
+
+            int preOpenings = 0;
+            int savedOpenings = 0;
+            for (int x = minX; x <= maxX; ++x) {
+                for (int z = minZ; z <= maxZ; ++z) {
+                    boolean side = x == minX || x == maxX || z == minZ || z == maxZ;
+                    if (!side) continue;
+
+                    boolean preOpen = pre.get(x, attempt.centerY, z) == BetaChunk173.AIR
+                            && pre.get(x, attempt.centerY + 1, z) == BetaChunk173.AIR;
+                    boolean savedOpen = saved.get(x, attempt.centerY, z) == BetaChunk173.AIR
+                            && saved.get(x, attempt.centerY + 1, z) == BetaChunk173.AIR;
+                    if (preOpen) preOpenings++;
+                    if (savedOpen) savedOpenings++;
+                    if (preOpen != savedOpen) {
+                        sideOpeningMismatch++;
+                        rememberMismatch(firstMismatches, x, attempt.centerY, z,
+                                pre.get(x, attempt.centerY, z), saved.get(x, attempt.centerY, z));
+                    }
+
+                    for (int y = attempt.centerY; y <= attempt.centerY + 1; ++y) {
+                        int preBlock = pre.get(x, y, z);
+                        int savedBlock = saved.get(x, y, z);
+                        compared++;
+                        if (preBlock != savedBlock) exactMismatch++;
+                        if (dungeonCategory(preBlock) != dungeonCategory(savedBlock)) {
+                            categoryMismatch++;
+                        }
+                    }
+                }
+            }
+
+            System.out.printf(Locale.ROOT,
+                    "  attempt=%d candidate=(%d,%d,%d) preOpenings=%d savedOpenings=%d "
+                            + "categoryMismatch=%d exactBlockMismatch=%d/%d floorCategoryMismatch=%d "
+                            + "ceilingCategoryMismatch=%d sideOpeningMismatch=%d%n",
+                    attempt.attempt,
+                    attempt.centerX, attempt.centerY, attempt.centerZ,
+                    preOpenings, savedOpenings,
+                    categoryMismatch, exactMismatch, compared,
+                    floorBuildableMismatch, ceilingBuildableMismatch, sideOpeningMismatch);
+
+            for (String mismatch : firstMismatches) {
+                System.out.println("    " + mismatch);
+            }
+
+            if (categoryMismatch == 0 && preOpenings == savedOpenings) {
+                System.out.println("    dungeon-relevant AIR/LIQUID/BUILDABLE topology matches the saved world at this candidate.");
+            } else {
+                System.out.println("    TOPOLOGY DIVERGENCE: saved world would not present the same dungeon validation state.");
+            }
+        }
+    }
+
+    private static void rememberMismatch(
+            List<String> out, int x, int y, int z, int preBlock, int savedBlock) {
+        if (out.size() >= 12) return;
+        out.add(String.format(Locale.ROOT,
+                "mismatch=(%d,%d,%d) pre=%d[%s] saved=%d[%s]",
+                x, y, z,
+                preBlock, dungeonCategoryName(preBlock),
+                savedBlock, dungeonCategoryName(savedBlock)));
+    }
+
+    private static int dungeonCategory(int block) {
+        if (block == BetaChunk173.AIR) return 0;
+        if (block == BetaChunk173.WATER_MOVING
+                || block == BetaChunk173.WATER_STILL
+                || block == BetaChunk173.LAVA_MOVING
+                || block == BetaChunk173.LAVA_STILL) return 1;
+        return 2;
+    }
+
+    private static String dungeonCategoryName(int block) {
+        int category = dungeonCategory(block);
+        return category == 0 ? "AIR" : (category == 1 ? "LIQUID" : "BUILDABLE");
+    }
+
+    private static Long readLevelSeed(Path world) throws IOException {
+        Path level = world.resolve("level.dat");
+        if (!Files.isRegularFile(level)) return null;
+
+        try (DataInputStream in = new DataInputStream(new BufferedInputStream(
+                new GZIPInputStream(Files.newInputStream(level))))) {
+            NbtCapture capture = new NbtCapture();
+            int rootType = in.readUnsignedByte();
+            if (rootType == 0) return null;
+            readString(in);
+            readPayload(in, rootType, capture);
+            return capture.randomSeed;
         }
     }
 
@@ -362,6 +526,10 @@ public final class BetaWorldDungeonAudit173 {
                 }
                 continue;
             }
+            if (type == 4 && name.equals("RandomSeed")) {
+                capture.randomSeed = in.readLong();
+                continue;
+            }
 
             readPayload(in, type, capture);
         }
@@ -393,6 +561,58 @@ public final class BetaWorldDungeonAudit173 {
 
     private static final class NbtCapture {
         byte[] blocks;
+        Long randomSeed;
+    }
+
+    private static final class SavedWorld {
+        final Path regionDir;
+        final Map<Long, ChunkData> cache = new HashMap<>();
+
+        SavedWorld(Path regionDir) {
+            this.regionDir = regionDir;
+        }
+
+        int get(int worldX, int y, int worldZ) throws IOException {
+            if (y < 0 || y >= 128) return BetaChunk173.AIR;
+            int chunkX = Math.floorDiv(worldX, 16);
+            int chunkZ = Math.floorDiv(worldZ, 16);
+            long key = (((long) chunkX) << 32) ^ (chunkZ & 0xffffffffL);
+            ChunkData chunk;
+            if (cache.containsKey(key)) {
+                chunk = cache.get(key);
+            } else {
+                chunk = readChunk(regionDir, chunkX, chunkZ);
+                cache.put(key, chunk);
+            }
+            if (chunk == null) return BetaChunk173.AIR;
+            int localX = Math.floorMod(worldX, 16);
+            int localZ = Math.floorMod(worldZ, 16);
+            return chunk.blocks[(localX * 16 + localZ) * 128 + y] & 0xFF;
+        }
+    }
+
+    private static final class PrePopulationWorld {
+        final BetaChunk173 generator;
+        final Map<Long, int[]> cache = new HashMap<>();
+
+        PrePopulationWorld(long seed) {
+            this.generator = new BetaChunk173(seed);
+        }
+
+        int get(int worldX, int y, int worldZ) {
+            if (y < 0 || y >= 128) return BetaChunk173.AIR;
+            int chunkX = Math.floorDiv(worldX, 16);
+            int chunkZ = Math.floorDiv(worldZ, 16);
+            long key = (((long) chunkX) << 32) ^ (chunkZ & 0xffffffffL);
+            int[] chunk = cache.get(key);
+            if (chunk == null) {
+                chunk = generator.generateChunk(chunkX, chunkZ);
+                cache.put(key, chunk);
+            }
+            int localX = Math.floorMod(worldX, 16);
+            int localZ = Math.floorMod(worldZ, 16);
+            return chunk[BetaChunk173.index(localX, y, localZ)];
+        }
     }
 
     private static final class ChunkData {
