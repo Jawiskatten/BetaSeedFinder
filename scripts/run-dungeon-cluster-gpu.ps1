@@ -1,7 +1,7 @@
 param(
     [UInt64]$Start = 0,
     [UInt64]$Count = 1000000,
-    [int]$Batch = 2048,
+    [int]$Batch = 1024,
     [int]$Threads = 8,
     [int]$ChunkX = 0,
     [int]$ChunkZ = 0,
@@ -24,9 +24,9 @@ if (-not (Test-Path $gpuExe -PathType Leaf)) {
 }
 
 $requestedBatch = $Batch
-$maxSafeBatch = 4096
+$maxSafeBatch = 2048
 if ($Batch -gt $maxSafeBatch) {
-    Write-Warning ("Batch {0} is too large for the V2 display-GPU kernel; clamping to {1} to avoid Windows TDR/driver reset." -f $Batch,$maxSafeBatch)
+    Write-Warning ("Batch {0} is too large for the V2 display-GPU kernel; clamping to {1} for the first V2 stability pass to avoid Windows TDR/driver reset." -f $Batch,$maxSafeBatch)
     $Batch = $maxSafeBatch
 }
 if ($Batch -lt 1) { throw '-Batch must be >= 1' }
@@ -47,7 +47,7 @@ Write-Host 'Stage 0: GPU no-lake failure-prefix two-block cave-doorway scout.'
 Write-Host 'Stage 1: exact Java BetaChunk173 + caves + lakes + sequential dungeon generation.'
 Write-Host 'IMPORTANT: V2 coverage is limited to population streams with no pre-dungeon lake trigger.' -ForegroundColor Yellow
 Write-Host ("start={0} count={1} batch={2} requestedBatch={3} chunk=({4},{5})" -f $Start,$Count,$Batch,$requestedBatch,$ChunkX,$ChunkZ)
-Write-Host 'Display-GPU safety: each HIP dispatch is capped at 4096 seeds to avoid Windows TDR.' -ForegroundColor DarkYellow
+Write-Host 'Display-GPU safety: each HIP dispatch is capped at 2048 seeds to avoid Windows TDR.' -ForegroundColor DarkYellow
 Write-Host "Output=$outDir"
 Write-Host ''
 
