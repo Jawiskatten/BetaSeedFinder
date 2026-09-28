@@ -167,11 +167,18 @@ __device__ __forceinline__ bool caveWouldAirBlock(
     return nx * nx + ny * ny + nz * nz < 1.0 + CARVE_EPS;
 }
 
+__device__ __forceinline__ int floorDiv16(int value) {
+    if (value >= 0) return value >> 4;
+    return -(((-value) + 15) >> 4);
+}
+
 __device__ __forceinline__ bool updateDoorwaysForNode(
         double x, double y, double z,
         double radiusXZ, double radiusY,
         const RoomCandidate rooms[ATTEMPTS],
-        DoorState& state) {
+        DoorState& state,
+        int targetChunkX,
+        int targetChunkZ) {
     for (int roomIndex = 0; roomIndex < ATTEMPTS; ++roomIndex) {
         if ((state.roomMask & (1u << roomIndex)) != 0) continue;
         const RoomCandidate& room = rooms[roomIndex];
@@ -190,6 +197,9 @@ __device__ __forceinline__ bool updateDoorwaysForNode(
                 if (!perimeter) continue;
 
                 const std::uint32_t bit = 1u << doorIndex++;
+                if (floorDiv16(bx) != targetChunkX || floorDiv16(bz) != targetChunkZ) {
+                    continue;
+                }
                 if (caveWouldAirBlock(
                         x, y, z, radiusXZ, radiusY,
                         bx, room.y, bz)) {
@@ -227,7 +237,9 @@ __device__ __forceinline__ bool simulateNoBranchNode(
         p20::JavaRandom& sourceRandom,
         CaveParams p,
         const RoomCandidate rooms[ATTEMPTS],
-        DoorState& state) {
+        DoorState& state,
+        int targetChunkX,
+        int targetChunkZ) {
     float yawVelocity = 0.0f;
     float pitchVelocity = 0.0f;
 
@@ -247,6 +259,8 @@ __device__ __forceinline__ bool simulateNoBranchNode(
 
     (void)local.nextInt(p.maxStep / 2);
     const bool gentlePitch = local.nextInt(6) == 0;
+    const double targetCenterX = static_cast<double>(targetChunkX * 16 + 8);
+    const double targetCenterZ = static_cast<double>(targetChunkZ * 16 + 8);
 
     for (; p.step < p.maxStep; ++p.step) {
         const double radiusXZ =
@@ -273,9 +287,25 @@ __device__ __forceinline__ bool simulateNoBranchNode(
 
         bool carveStep = singleNode;
         if (!singleNode) carveStep = local.nextInt(4) != 0;
-        if (carveStep && updateDoorwaysForNode(
-                p.x, p.y, p.z, radiusXZ, radiusY, rooms, state)) {
-            return true;
+        if (carveStep) {
+            const double dx = p.x - targetCenterX;
+            const double dz = p.z - targetCenterZ;
+            const double remaining = static_cast<double>(p.maxStep - p.step);
+            const double maxReach = static_cast<double>(p.width + 2.0f + 16.0f);
+            if (dx * dx + dz * dz - remaining * remaining > maxReach * maxReach) {
+                return false;
+            }
+
+            const bool intersectsTarget =
+                    p.x >= targetCenterX - 16.0 - radiusXZ * 2.0
+                    && p.z >= targetCenterZ - 16.0 - radiusXZ * 2.0
+                    && p.x <= targetCenterX + 16.0 + radiusXZ * 2.0
+                    && p.z <= targetCenterZ + 16.0 + radiusXZ * 2.0;
+            if (intersectsTarget && updateDoorwaysForNode(
+                    p.x, p.y, p.z, radiusXZ, radiusY,
+                    rooms, state, targetChunkX, targetChunkZ)) {
+                return true;
+            }
         }
 
         if (singleNode) break;
@@ -287,7 +317,9 @@ __device__ __forceinline__ bool simulateNode(
         p20::JavaRandom& sourceRandom,
         CaveParams p,
         const RoomCandidate rooms[ATTEMPTS],
-        DoorState& state) {
+        DoorState& state,
+        int targetChunkX,
+        int targetChunkZ) {
     float yawVelocity = 0.0f;
     float pitchVelocity = 0.0f;
 
@@ -307,6 +339,8 @@ __device__ __forceinline__ bool simulateNode(
 
     const int branchStep = local.nextInt(p.maxStep / 2) + p.maxStep / 4;
     const bool gentlePitch = local.nextInt(6) == 0;
+    const double targetCenterX = static_cast<double>(targetChunkX * 16 + 8);
+    const double targetCenterZ = static_cast<double>(targetChunkZ * 16 + 8);
 
     for (; p.step < p.maxStep; ++p.step) {
         const double radiusXZ =
@@ -337,22 +371,38 @@ __device__ __forceinline__ bool simulateNode(
             left.yaw = p.yaw - 1.5707964f;
             left.pitch = p.pitch / 3.0f;
             left.verticalScale = 1.0;
-            if (simulateNoBranchNode(sourceRandom, left, rooms, state)) return true;
+            if (simulateNoBranchNode(sourceRandom, left, rooms, state, targetChunkX, targetChunkZ)) return true;
 
             CaveParams right = p;
             right.width = nextFloat(local) * 0.5f + 0.5f;
             right.yaw = p.yaw + 1.5707964f;
             right.pitch = p.pitch / 3.0f;
             right.verticalScale = 1.0;
-            if (simulateNoBranchNode(sourceRandom, right, rooms, state)) return true;
+            if (simulateNoBranchNode(sourceRandom, right, rooms, state, targetChunkX, targetChunkZ)) return true;
             return false;
         }
 
         bool carveStep = singleNode;
         if (!singleNode) carveStep = local.nextInt(4) != 0;
-        if (carveStep && updateDoorwaysForNode(
-                p.x, p.y, p.z, radiusXZ, radiusY, rooms, state)) {
-            return true;
+        if (carveStep) {
+            const double dx = p.x - targetCenterX;
+            const double dz = p.z - targetCenterZ;
+            const double remaining = static_cast<double>(p.maxStep - p.step);
+            const double maxReach = static_cast<double>(p.width + 2.0f + 16.0f);
+            if (dx * dx + dz * dz - remaining * remaining > maxReach * maxReach) {
+                return false;
+            }
+
+            const bool intersectsTarget =
+                    p.x >= targetCenterX - 16.0 - radiusXZ * 2.0
+                    && p.z >= targetCenterZ - 16.0 - radiusXZ * 2.0
+                    && p.x <= targetCenterX + 16.0 + radiusXZ * 2.0
+                    && p.z <= targetCenterZ + 16.0 + radiusXZ * 2.0;
+            if (intersectsTarget && updateDoorwaysForNode(
+                    p.x, p.y, p.z, radiusXZ, radiusY,
+                    rooms, state, targetChunkX, targetChunkZ)) {
+                return true;
+            }
         }
 
         if (singleNode) break;
@@ -370,46 +420,67 @@ __device__ __forceinline__ std::uint32_t caveDoorwayMask(
     const std::int64_t oddX = javaOddLong(javaNextLong(master));
     const std::int64_t oddZ = javaOddLong(javaNextLong(master));
 
-    const int minSourceX = populationChunkX - CAVE_RANGE;
-    const int maxSourceX = populationChunkX + 1 + CAVE_RANGE;
-    const int minSourceZ = populationChunkZ - CAVE_RANGE;
-    const int maxSourceZ = populationChunkZ + 1 + CAVE_RANGE;
-
     DoorState state{};
-    for (int sourceX = minSourceX; sourceX <= maxSourceX; ++sourceX) {
-        for (int sourceZ = minSourceZ; sourceZ <= maxSourceZ; ++sourceZ) {
-            p20::JavaRandom random;
-            random.setSeed(javaLongMix(sourceX, oddX, sourceZ, oddZ, seed));
 
-            int count = random.nextInt(random.nextInt(random.nextInt(40) + 1) + 1);
-            if (random.nextInt(15) != 0) count = 0;
+    // MapGenBase replays source caves independently for each target chunk.
+    // Early reach exits can happen before a branch and therefore change how
+    // many sourceRandom.nextLong() values recursive child nodes consume. We
+    // must preserve that target-specific execution to keep later cave RNG exact.
+    for (int targetChunkX = populationChunkX;
+         targetChunkX <= populationChunkX + 1; ++targetChunkX) {
+        for (int targetChunkZ = populationChunkZ;
+             targetChunkZ <= populationChunkZ + 1; ++targetChunkZ) {
 
-            for (int cave = 0; cave < count; ++cave) {
-                const double x = static_cast<double>(sourceX * 16 + random.nextInt(16));
-                const double y = static_cast<double>(random.nextInt(random.nextInt(120) + 8));
-                const double z = static_cast<double>(sourceZ * 16 + random.nextInt(16));
-                int tunnels = 1;
+            const int minSourceX = targetChunkX - CAVE_RANGE;
+            const int maxSourceX = targetChunkX + CAVE_RANGE;
+            const int minSourceZ = targetChunkZ - CAVE_RANGE;
+            const int maxSourceZ = targetChunkZ + CAVE_RANGE;
 
-                if (random.nextInt(4) == 0) {
-                    CaveParams large{
-                        x, y, z,
-                        1.0f + nextFloat(random) * 6.0f,
-                        0.0f, 0.0f,
-                        -1, -1, 0.5
-                    };
-                    if (simulateNode(random, large, rooms, state)) {
-                        return state.roomMask;
-                    }
-                    tunnels += random.nextInt(4);
-                }
+            for (int sourceX = minSourceX; sourceX <= maxSourceX; ++sourceX) {
+                for (int sourceZ = minSourceZ; sourceZ <= maxSourceZ; ++sourceZ) {
+                    p20::JavaRandom random;
+                    random.setSeed(javaLongMix(sourceX, oddX, sourceZ, oddZ, seed));
 
-                for (int tunnel = 0; tunnel < tunnels; ++tunnel) {
-                    const float yaw = nextFloat(random) * PI * 2.0f;
-                    const float pitch = (nextFloat(random) - 0.5f) * 2.0f / 8.0f;
-                    const float width = nextFloat(random) * 2.0f + nextFloat(random);
-                    CaveParams p{x, y, z, width, yaw, pitch, 0, 0, 1.0};
-                    if (simulateNode(random, p, rooms, state)) {
-                        return state.roomMask;
+                    int count = random.nextInt(random.nextInt(random.nextInt(40) + 1) + 1);
+                    if (random.nextInt(15) != 0) count = 0;
+
+                    for (int cave = 0; cave < count; ++cave) {
+                        const double x =
+                                static_cast<double>(sourceX * 16 + random.nextInt(16));
+                        const double y =
+                                static_cast<double>(random.nextInt(random.nextInt(120) + 8));
+                        const double z =
+                                static_cast<double>(sourceZ * 16 + random.nextInt(16));
+                        int tunnels = 1;
+
+                        if (random.nextInt(4) == 0) {
+                            CaveParams large{
+                                x, y, z,
+                                1.0f + nextFloat(random) * 6.0f,
+                                0.0f, 0.0f,
+                                -1, -1, 0.5
+                            };
+                            if (simulateNode(
+                                    random, large, rooms, state,
+                                    targetChunkX, targetChunkZ)) {
+                                return state.roomMask;
+                            }
+                            tunnels += random.nextInt(4);
+                        }
+
+                        for (int tunnel = 0; tunnel < tunnels; ++tunnel) {
+                            const float yaw = nextFloat(random) * PI * 2.0f;
+                            const float pitch =
+                                    (nextFloat(random) - 0.5f) * 2.0f / 8.0f;
+                            const float width =
+                                    nextFloat(random) * 2.0f + nextFloat(random);
+                            CaveParams p{x, y, z, width, yaw, pitch, 0, 0, 1.0};
+                            if (simulateNode(
+                                    random, p, rooms, state,
+                                    targetChunkX, targetChunkZ)) {
+                                return state.roomMask;
+                            }
+                        }
                     }
                 }
             }
