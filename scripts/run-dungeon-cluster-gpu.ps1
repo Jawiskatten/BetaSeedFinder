@@ -32,10 +32,10 @@ $candidates = Join-Path $outDir 'gpu_candidates.csv'
 $exact = Join-Path $outDir 'exact_connected_clusters.csv'
 
 Write-Host ''
-Write-Host 'Dungeon Cluster GPU Pipeline V1' -ForegroundColor Cyan
-Write-Host 'Stage 0: GPU no-lake failure-prefix cave-proximity scout.'
+Write-Host 'Dungeon Cluster GPU Pipeline V2' -ForegroundColor Cyan
+Write-Host 'Stage 0: GPU no-lake failure-prefix two-block cave-doorway scout.'
 Write-Host 'Stage 1: exact Java BetaChunk173 + caves + lakes + sequential dungeon generation.'
-Write-Host 'IMPORTANT: V1 coverage is limited to population streams with no pre-dungeon lake trigger.' -ForegroundColor Yellow
+Write-Host 'IMPORTANT: V2 coverage is limited to population streams with no pre-dungeon lake trigger.' -ForegroundColor Yellow
 Write-Host ("start={0} count={1} batch={2} chunk=({3},{4})" -f $Start,$Count,$Batch,$ChunkX,$ChunkZ)
 Write-Host "Output=$outDir"
 Write-Host ''
@@ -70,7 +70,7 @@ if ($LASTEXITCODE -ne 0) { throw "Exact dungeon candidate verification exited wi
 $verifySw.Stop()
 
 $summary = @(
-    'DungeonClusterGpuPipelineV1'
+    'DungeonClusterGpuPipelineV2'
     "start=$Start"
     "count=$Count"
     "gpu_candidates=$candidateCount"
@@ -79,7 +79,7 @@ $summary = @(
     "verify_seconds=$($verifySw.Elapsed.TotalSeconds)"
     "chunk_x=$ChunkX"
     "chunk_z=$ChunkZ"
-    'coverage=no-lake-trigger cave-proximity first-success necessary-condition scout'
+    'coverage=no-lake-trigger two-block cave-doorway first-success necessary-condition scout'
 ) -join [Environment]::NewLine
 [IO.File]::WriteAllText((Join-Path $outDir 'summary.txt'), $summary + [Environment]::NewLine, [Text.Encoding]::ASCII)
 
