@@ -117,36 +117,98 @@ __host__ __device__ __forceinline__ bool initFailurePrefixRooms(
     return true;
 }
 
-__device__ __forceinline__ bool ellipsoidBoxMayTouchRoom(
+
+static constexpr double CARVE_EPS = 0.035;
+static constexpr double TWO_PI_OVER_65536 = 0.00009587379924285257;
+
+__device__ __forceinline__ float betaSin(float value) {
+    const int index = static_cast<int>(value * 10430.378f) & 65535;
+    return static_cast<float>(sin(static_cast<double>(index) * TWO_PI_OVER_65536));
+}
+
+__device__ __forceinline__ float betaCos(float value) {
+    const int index = (static_cast<int>(value * 10430.378f + 16384.0f)) & 65535;
+    return static_cast<float>(sin(static_cast<double>(index) * TWO_PI_OVER_65536));
+}
+
+struct DoorState {
+    std::uint32_t low[ATTEMPTS];
+    std::uint32_t high[ATTEMPTS];
+    std::uint32_t roomMask;
+};
+
+__device__ __forceinline__ bool nodeMayReachRoom(
         double x, double y, double z,
         double radiusXZ, double radiusY,
         const RoomCandidate& room) {
-    // Openings are checked on the room perimeter at centerY and centerY+1.
-    // This deliberately uses an expanded bounding test. It may admit false
-    // positives, but avoids rejecting a cave that could carve an opening.
-    const double minX = static_cast<double>(room.x - room.halfX - 1 - ROOM_PAD);
-    const double maxX = static_cast<double>(room.x + room.halfX + 1 + ROOM_PAD);
-    const double minZ = static_cast<double>(room.z - room.halfZ - 1 - ROOM_PAD);
-    const double maxZ = static_cast<double>(room.z + room.halfZ + 1 + ROOM_PAD);
-    const double minY = static_cast<double>(room.y - 1 - ROOM_PAD);
-    const double maxY = static_cast<double>(room.y + 2 + ROOM_PAD);
-
-    return x + radiusXZ >= minX && x - radiusXZ <= maxX
-        && z + radiusXZ >= minZ && z - radiusXZ <= maxZ
-        && y + radiusY >= minY && y - radiusY <= maxY;
+    const double minX = static_cast<double>(room.x - room.halfX - 1) + 0.5;
+    const double maxX = static_cast<double>(room.x + room.halfX + 1) + 0.5;
+    const double minZ = static_cast<double>(room.z - room.halfZ - 1) + 0.5;
+    const double maxZ = static_cast<double>(room.z + room.halfZ + 1) + 0.5;
+    const double minY = static_cast<double>(room.y) + 0.5;
+    const double maxY = static_cast<double>(room.y + 1) + 0.5;
+    return x + radiusXZ + 0.75 >= minX && x - radiusXZ - 0.75 <= maxX
+        && z + radiusXZ + 0.75 >= minZ && z - radiusXZ - 0.75 <= maxZ
+        && y + radiusY + 0.75 >= minY && y - radiusY - 0.75 <= maxY;
 }
 
-__device__ __forceinline__ std::uint32_t roomsTouchedByNode(
+__device__ __forceinline__ bool caveWouldAirBlock(
         double x, double y, double z,
         double radiusXZ, double radiusY,
-        const RoomCandidate rooms[ATTEMPTS]) {
-    std::uint32_t mask = 0;
-    for (int i = 0; i < ATTEMPTS; ++i) {
-        if (ellipsoidBoxMayTouchRoom(x, y, z, radiusXZ, radiusY, rooms[i])) {
-            mask |= (1u << i);
+        int blockX, int blockY, int blockZ) {
+    // Beta caves write lava below Y10, not air, so such blocks cannot form a
+    // dungeon doorway. Ignore material/water cancellation here deliberately:
+    // doing so can only create false positives for the Java verifier.
+    if (blockY < 10) return false;
+    const double nx = (static_cast<double>(blockX) + 0.5 - x) / radiusXZ;
+    const double nz = (static_cast<double>(blockZ) + 0.5 - z) / radiusXZ;
+    const double ny = (static_cast<double>(blockY) + 0.5 - y) / radiusY;
+    if (ny <= -0.7 - CARVE_EPS) return false;
+    return nx * nx + ny * ny + nz * nz < 1.0 + CARVE_EPS;
+}
+
+__device__ __forceinline__ bool updateDoorwaysForNode(
+        double x, double y, double z,
+        double radiusXZ, double radiusY,
+        const RoomCandidate rooms[ATTEMPTS],
+        DoorState& state) {
+    for (int roomIndex = 0; roomIndex < ATTEMPTS; ++roomIndex) {
+        if ((state.roomMask & (1u << roomIndex)) != 0) continue;
+        const RoomCandidate& room = rooms[roomIndex];
+        if (!nodeMayReachRoom(x, y, z, radiusXZ, radiusY, room)) continue;
+
+        const int minX = room.x - room.halfX - 1;
+        const int maxX = room.x + room.halfX + 1;
+        const int minZ = room.z - room.halfZ - 1;
+        const int maxZ = room.z + room.halfZ + 1;
+        int doorIndex = 0;
+
+        for (int bx = minX; bx <= maxX; ++bx) {
+            for (int bz = minZ; bz <= maxZ; ++bz) {
+                const bool perimeter =
+                        bx == minX || bx == maxX || bz == minZ || bz == maxZ;
+                if (!perimeter) continue;
+
+                const std::uint32_t bit = 1u << doorIndex++;
+                if (caveWouldAirBlock(
+                        x, y, z, radiusXZ, radiusY,
+                        bx, room.y, bz)) {
+                    state.low[roomIndex] |= bit;
+                }
+                if (caveWouldAirBlock(
+                        x, y, z, radiusXZ, radiusY,
+                        bx, room.y + 1, bz)) {
+                    state.high[roomIndex] |= bit;
+                }
+            }
+        }
+
+        if ((state.low[roomIndex] & state.high[roomIndex]) != 0) {
+            state.roomMask |= (1u << roomIndex);
+            return true;
         }
     }
-    return mask;
+    return false;
 }
 
 struct CaveParams {
@@ -161,10 +223,11 @@ struct CaveParams {
     double verticalScale;
 };
 
-__device__ __forceinline__ std::uint32_t simulateNoBranchNode(
+__device__ __forceinline__ bool simulateNoBranchNode(
         p20::JavaRandom& sourceRandom,
         CaveParams p,
-        const RoomCandidate rooms[ATTEMPTS]) {
+        const RoomCandidate rooms[ATTEMPTS],
+        DoorState& state) {
     float yawVelocity = 0.0f;
     float pitchVelocity = 0.0f;
 
@@ -172,7 +235,7 @@ __device__ __forceinline__ std::uint32_t simulateNoBranchNode(
     local.setSeed(javaNextLong(sourceRandom));
 
     if (p.maxStep <= 0) {
-        const int max = CAVE_RANGE * 16 - 16; // 112
+        const int max = CAVE_RANGE * 16 - 16;
         p.maxStep = max - local.nextInt(max / 4);
     }
 
@@ -182,19 +245,21 @@ __device__ __forceinline__ std::uint32_t simulateNoBranchNode(
         singleNode = true;
     }
 
-    (void)local.nextInt(p.maxStep / 2); // branchStep, irrelevant: width < 1 for child nodes.
+    (void)local.nextInt(p.maxStep / 2);
     const bool gentlePitch = local.nextInt(6) == 0;
 
     for (; p.step < p.maxStep; ++p.step) {
-        const double s = static_cast<double>(sinf(static_cast<float>(p.step) * PI / static_cast<float>(p.maxStep)));
-        const double radiusXZ = 1.5 + s * static_cast<double>(p.width);
+        const double radiusXZ =
+                1.5 + static_cast<double>(
+                        betaSin(static_cast<float>(p.step) * PI / static_cast<float>(p.maxStep))
+                        * p.width);
         const double radiusY = radiusXZ * p.verticalScale;
 
-        const float cosPitch = cosf(p.pitch);
-        const float sinPitch = sinf(p.pitch);
-        p.x += static_cast<double>(cosf(p.yaw) * cosPitch);
+        const float cosPitch = betaCos(p.pitch);
+        const float sinPitch = betaSin(p.pitch);
+        p.x += static_cast<double>(betaCos(p.yaw) * cosPitch);
         p.y += static_cast<double>(sinPitch);
-        p.z += static_cast<double>(sinf(p.yaw) * cosPitch);
+        p.z += static_cast<double>(betaSin(p.yaw) * cosPitch);
 
         if (gentlePitch) p.pitch *= 0.92f;
         else p.pitch *= 0.7f;
@@ -206,23 +271,23 @@ __device__ __forceinline__ std::uint32_t simulateNoBranchNode(
         pitchVelocity += (nextFloat(local) - nextFloat(local)) * nextFloat(local) * 2.0f;
         yawVelocity += (nextFloat(local) - nextFloat(local)) * nextFloat(local) * 4.0f;
 
-        if (roomsTouchedByNode(p.x, p.y, p.z, radiusXZ + 1.5, radiusY + 1.5, rooms) != 0) {
-            return roomsTouchedByNode(p.x, p.y, p.z, radiusXZ + 1.5, radiusY + 1.5, rooms);
+        bool carveStep = singleNode;
+        if (!singleNode) carveStep = local.nextInt(4) != 0;
+        if (carveStep && updateDoorwaysForNode(
+                p.x, p.y, p.z, radiusXZ, radiusY, rooms, state)) {
+            return true;
         }
 
         if (singleNode) break;
-
-        // Consume the same occasional carve-gate RNG as Beta. It only affects
-        // the local tunnel RNG trajectory, not our conservative geometry test.
-        (void)local.nextInt(4);
     }
-    return 0;
+    return false;
 }
 
-__device__ __forceinline__ std::uint32_t simulateNode(
+__device__ __forceinline__ bool simulateNode(
         p20::JavaRandom& sourceRandom,
         CaveParams p,
-        const RoomCandidate rooms[ATTEMPTS]) {
+        const RoomCandidate rooms[ATTEMPTS],
+        DoorState& state) {
     float yawVelocity = 0.0f;
     float pitchVelocity = 0.0f;
 
@@ -244,15 +309,17 @@ __device__ __forceinline__ std::uint32_t simulateNode(
     const bool gentlePitch = local.nextInt(6) == 0;
 
     for (; p.step < p.maxStep; ++p.step) {
-        const double s = static_cast<double>(sinf(static_cast<float>(p.step) * PI / static_cast<float>(p.maxStep)));
-        const double radiusXZ = 1.5 + s * static_cast<double>(p.width);
+        const double radiusXZ =
+                1.5 + static_cast<double>(
+                        betaSin(static_cast<float>(p.step) * PI / static_cast<float>(p.maxStep))
+                        * p.width);
         const double radiusY = radiusXZ * p.verticalScale;
 
-        const float cosPitch = cosf(p.pitch);
-        const float sinPitch = sinf(p.pitch);
-        p.x += static_cast<double>(cosf(p.yaw) * cosPitch);
+        const float cosPitch = betaCos(p.pitch);
+        const float sinPitch = betaSin(p.pitch);
+        p.x += static_cast<double>(betaCos(p.yaw) * cosPitch);
         p.y += static_cast<double>(sinPitch);
-        p.z += static_cast<double>(sinf(p.yaw) * cosPitch);
+        p.z += static_cast<double>(betaSin(p.yaw) * cosPitch);
 
         if (gentlePitch) p.pitch *= 0.92f;
         else p.pitch *= 0.7f;
@@ -264,38 +331,36 @@ __device__ __forceinline__ std::uint32_t simulateNode(
         pitchVelocity += (nextFloat(local) - nextFloat(local)) * nextFloat(local) * 2.0f;
         yawVelocity += (nextFloat(local) - nextFloat(local)) * nextFloat(local) * 4.0f;
 
-        const std::uint32_t here =
-                roomsTouchedByNode(p.x, p.y, p.z, radiusXZ + 1.5, radiusY + 1.5, rooms);
-        if (here != 0) return here;
-
         if (!singleNode && p.step == branchStep && p.width > 1.0f) {
             CaveParams left = p;
             left.width = nextFloat(local) * 0.5f + 0.5f;
             left.yaw = p.yaw - 1.5707964f;
             left.pitch = p.pitch / 3.0f;
             left.verticalScale = 1.0;
-            std::uint32_t hit = simulateNoBranchNode(sourceRandom, left, rooms);
-            if (hit != 0) return hit;
+            if (simulateNoBranchNode(sourceRandom, left, rooms, state)) return true;
 
             CaveParams right = p;
             right.width = nextFloat(local) * 0.5f + 0.5f;
             right.yaw = p.yaw + 1.5707964f;
             right.pitch = p.pitch / 3.0f;
             right.verticalScale = 1.0;
-            hit = simulateNoBranchNode(sourceRandom, right, rooms);
-            if (hit != 0) return hit;
-            return 0;
+            if (simulateNoBranchNode(sourceRandom, right, rooms, state)) return true;
+            return false;
         }
 
-        // Beta only evaluates the carving body for 3/4 regular steps. Consume
-        // the exact local RNG decision so the later tunnel trajectory matches.
-        if (!singleNode) (void)local.nextInt(4);
+        bool carveStep = singleNode;
+        if (!singleNode) carveStep = local.nextInt(4) != 0;
+        if (carveStep && updateDoorwaysForNode(
+                p.x, p.y, p.z, radiusXZ, radiusY, rooms, state)) {
+            return true;
+        }
+
         if (singleNode) break;
     }
-    return 0;
+    return false;
 }
 
-__device__ __forceinline__ std::uint32_t caveProximityMaskExactParamOrder(
+__device__ __forceinline__ std::uint32_t caveDoorwayMask(
         std::int64_t seed,
         int populationChunkX,
         int populationChunkZ,
@@ -310,6 +375,7 @@ __device__ __forceinline__ std::uint32_t caveProximityMaskExactParamOrder(
     const int minSourceZ = populationChunkZ - CAVE_RANGE;
     const int maxSourceZ = populationChunkZ + 1 + CAVE_RANGE;
 
+    DoorState state{};
     for (int sourceX = minSourceX; sourceX <= maxSourceX; ++sourceX) {
         for (int sourceZ = minSourceZ; sourceZ <= maxSourceZ; ++sourceZ) {
             p20::JavaRandom random;
@@ -331,8 +397,9 @@ __device__ __forceinline__ std::uint32_t caveProximityMaskExactParamOrder(
                         0.0f, 0.0f,
                         -1, -1, 0.5
                     };
-                    const std::uint32_t hit = simulateNode(random, large, rooms);
-                    if (hit != 0) return hit;
+                    if (simulateNode(random, large, rooms, state)) {
+                        return state.roomMask;
+                    }
                     tunnels += random.nextInt(4);
                 }
 
@@ -341,13 +408,14 @@ __device__ __forceinline__ std::uint32_t caveProximityMaskExactParamOrder(
                     const float pitch = (nextFloat(random) - 0.5f) * 2.0f / 8.0f;
                     const float width = nextFloat(random) * 2.0f + nextFloat(random);
                     CaveParams p{x, y, z, width, yaw, pitch, 0, 0, 1.0};
-                    const std::uint32_t hit = simulateNode(random, p, rooms);
-                    if (hit != 0) return hit;
+                    if (simulateNode(random, p, rooms, state)) {
+                        return state.roomMask;
+                    }
                 }
             }
         }
     }
-    return 0;
+    return state.roomMask;
 }
 
 __global__ void scoutKernel(
@@ -368,7 +436,7 @@ __global__ void scoutKernel(
     }
 
     const std::uint32_t mask =
-            caveProximityMaskExactParamOrder(seed, populationChunkX, populationChunkZ, rooms);
+            caveDoorwayMask(seed, populationChunkX, populationChunkZ, rooms);
     if (mask == 0) return;
 
     const unsigned int out = atomicAdd(hitCount, 1u);
@@ -417,7 +485,7 @@ static Config parseArgs(int argc, char** argv) {
         else if (arg == "--self-test") c.selfTest = true;
         else if (arg == "--help" || arg == "-h") {
             std::cout
-                << "Beta 1.7.3 dungeon-cluster GPU cave-proximity scout\n\n"
+                << "Beta 1.7.3 dungeon-cluster GPU cave-doorway scout\n\n"
                 << "  --candidate-out <csv>\n"
                 << "  --start <u64>\n"
                 << "  --count <u64>\n"
@@ -425,7 +493,7 @@ static Config parseArgs(int argc, char** argv) {
                 << "  --chunk-x <int>     population chunk X, default 0\n"
                 << "  --chunk-z <int>     population chunk Z, default 0\n"
                 << "  --self-test\n\n"
-                << "V1 coverage: exact no-lake-trigger population streams; conservative cave geometry\n"
+                << "V2 coverage: exact no-lake-trigger population streams; conservative cave geometry\n"
                 << "around failure-prefix dungeon attempts. Java exact verification is mandatory.\n";
             std::exit(0);
         } else {
@@ -488,7 +556,7 @@ static void runSelfTest() {
 
     checkHip(hipFree(dCount), "self-test free count");
     checkHip(hipFree(dHits), "self-test free hits");
-    std::cout << "SELF_TEST_OK known dungeon cave hits retained; lake-trigger seed excluded\n";
+    std::cout << "SELF_TEST_OK known dungeon cave-door hits retained; lake-trigger seed excluded\n";
 }
 
 } // namespace dungeon_cluster_gpu
@@ -507,8 +575,8 @@ int main(int argc, char** argv) {
         hipDeviceProp_t prop{};
         checkHip(hipGetDeviceProperties(&prop, device), "hipGetDeviceProperties");
         std::cout << "GPU=" << prop.name << "\n";
-        std::cout << "DungeonCluster GPU Scout V1\n";
-        std::cout << "coverage=no-lake-trigger + cave-proximity first-success necessary condition\n";
+        std::cout << "DungeonCluster GPU Scout V2\n";
+        std::cout << "coverage=no-lake-trigger + cave-doorway first-success necessary condition\n";
         std::cout << "start=" << c.start << " count=" << c.count
                   << " batch=" << c.batch
                   << " populationChunk=(" << c.populationChunkX << "," << c.populationChunkZ << ")\n";
@@ -567,7 +635,7 @@ int main(int argc, char** argv) {
                         << hostHits[i].nearCaveMask << ','
                         << c.populationChunkX << ','
                         << c.populationChunkZ << ','
-                        << "cave_prefix_v1\n";
+                        << "cave_doorway_v2\n";
                 }
                 totalHits += hits;
             }
