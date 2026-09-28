@@ -1,7 +1,7 @@
 param(
     [UInt64]$Start = 0,
     [UInt64]$Count = 1000000,
-    [int]$Batch = 262144,
+    [int]$Batch = 2048,
     [int]$Threads = 8,
     [int]$ChunkX = 0,
     [int]$ChunkZ = 0,
@@ -17,9 +17,19 @@ Set-Location $root
 
 $gpuExe = Join-Path $root 'build\native\amd\DungeonClusterGpuScout.exe'
 if ($Rebuild -or -not (Test-Path $gpuExe -PathType Leaf)) {
-    $buildOutput = & (Join-Path $PSScriptRoot 'build-dungeon-cluster-gpu.ps1') -ProjectRoot $root -Arch $Arch
-    $gpuExe = [string]($buildOutput | Select-Object -Last 1)
+    & (Join-Path $PSScriptRoot 'build-dungeon-cluster-gpu.ps1') -ProjectRoot $root -Arch $Arch | Out-Host
 }
+if (-not (Test-Path $gpuExe -PathType Leaf)) {
+    throw "GPU scout executable missing after build: $gpuExe"
+}
+
+$requestedBatch = $Batch
+$maxSafeBatch = 4096
+if ($Batch -gt $maxSafeBatch) {
+    Write-Warning ("Batch {0} is too large for the V2 display-GPU kernel; clamping to {1} to avoid Windows TDR/driver reset." -f $Batch,$maxSafeBatch)
+    $Batch = $maxSafeBatch
+}
+if ($Batch -lt 1) { throw '-Batch must be >= 1' }
 
 if ($Rebuild -or -not (Test-Path 'build\java\classes\beta173\DungeonClusterFinder173.class')) {
     & (Join-Path $PSScriptRoot 'build-java.ps1') -ProjectRoot $root | Out-Null
@@ -36,7 +46,8 @@ Write-Host 'Dungeon Cluster GPU Pipeline V2' -ForegroundColor Cyan
 Write-Host 'Stage 0: GPU no-lake failure-prefix two-block cave-doorway scout.'
 Write-Host 'Stage 1: exact Java BetaChunk173 + caves + lakes + sequential dungeon generation.'
 Write-Host 'IMPORTANT: V2 coverage is limited to population streams with no pre-dungeon lake trigger.' -ForegroundColor Yellow
-Write-Host ("start={0} count={1} batch={2} chunk=({3},{4})" -f $Start,$Count,$Batch,$ChunkX,$ChunkZ)
+Write-Host ("start={0} count={1} batch={2} requestedBatch={3} chunk=({4},{5})" -f $Start,$Count,$Batch,$requestedBatch,$ChunkX,$ChunkZ)
+Write-Host 'Display-GPU safety: each HIP dispatch is capped at 4096 seeds to avoid Windows TDR.' -ForegroundColor DarkYellow
 Write-Host "Output=$outDir"
 Write-Host ''
 
@@ -76,6 +87,8 @@ $summary = @(
     "gpu_candidates=$candidateCount"
     "gpu_candidate_rate_percent=$candidateRate"
     "gpu_seconds=$gpuSeconds"
+    "requested_batch=$requestedBatch"
+    "effective_batch=$Batch"
     "verify_seconds=$($verifySw.Elapsed.TotalSeconds)"
     "chunk_x=$ChunkX"
     "chunk_z=$ChunkZ"
