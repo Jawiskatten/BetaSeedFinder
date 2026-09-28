@@ -39,7 +39,7 @@ struct Config {
     std::filesystem::path candidateOut = "out/dungeon_gpu_candidates.csv";
     std::uint64_t start = 0;
     std::uint64_t count = 1000000;
-    int batch = 262144;
+    int batch = 2048;
     int populationChunkX = 0;
     int populationChunkZ = 0;
     int progressMs = 1000;
