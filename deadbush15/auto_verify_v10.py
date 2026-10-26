@@ -167,6 +167,20 @@ def completed_keys(output):
 def write_row(output, original_columns, row):
     columns = list(original_columns) + [k for k in OUTPUT_FIELDS if k not in original_columns]
     exists = output.is_file() and output.stat().st_size > 0
+    if exists:
+        with output.open(newline="",encoding="utf-8-sig") as f:
+            previous_columns = next(csv.reader(f), [])
+        if previous_columns != columns:
+            # Backwards-compatible V10 -> V11 CSV migration. Never append extra
+            # values beneath the old header, which silently corrupts columns.
+            with output.open(newline="",encoding="utf-8-sig") as f:
+                previous_rows = list(csv.DictReader(f))
+            temp = output.with_suffix(output.suffix+".migrating")
+            with temp.open("w",newline="",encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=columns, extrasaction="ignore")
+                writer.writeheader()
+                writer.writerows(previous_rows)
+            temp.replace(output)
     with output.open("a",newline="",encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=columns, extrasaction="ignore")
         if not exists:
