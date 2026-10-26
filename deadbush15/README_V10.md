@@ -13,7 +13,7 @@ Run from `C:\Users\ASUS\Deadbush15\deadbush15`:
     git pull origin deadbush15
     py -3 test_auto_verify_v10.py
     py -3 auto_verify_v10.py --dry-run --csv v9_ranked.csv
-    py -3 auto_verify_v10.py --csv v9_ranked.csv --download-server --accept-eula --min-strict 12 --max-seeds 3
+    py -3 auto_verify_v10.py --csv v9_ranked.csv --download-server --accept-eula --min-strict 12 --max-seeds 3 --exclude-seeds 124767051,178096580
 
 The last command downloads **exactly Java 26.3 server.jar from Mojang**, verifies its Mojang SHA-1, and automatically searches your `.minecraft/runtime` for the bundled **Java 25+** runtime, otherwise uses `java` in PATH. **Only pass `--accept-eula` after reading and agreeing to https://aka.ms/MinecraftEULA**. Mojang's server software EULA applies.
 
