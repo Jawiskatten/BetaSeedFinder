@@ -8,6 +8,8 @@ on:
       - 'deadbush15/verify_world_v4.py'
       - 'deadbush15/verify_normal_v9.py'
       - 'deadbush15/test_palette_v9.py'
+      - 'deadbush15/auto_verify_v10.py'
+      - 'deadbush15/test_auto_verify_v10.py'
       - '.github/workflows/deadbush-v7.yml'
   workflow_dispatch:
 jobs:
@@ -32,3 +34,7 @@ jobs:
           /tmp/deadbush15_v9 --self-test
       - name: Verify Java 26.3 palette backward compatibility
         run: python3 deadbush15/test_palette_v9.py
+      - name: Check unattended V10 verifier syntax and offline regression
+        run: |
+          python3 -m py_compile deadbush15/auto_verify_v10.py deadbush15/verify_normal_v9.py
+          python3 deadbush15/test_auto_verify_v10.py
