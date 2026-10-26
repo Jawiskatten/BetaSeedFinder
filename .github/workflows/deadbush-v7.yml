@@ -1,0 +1,24 @@
+name: Deadbush V7 biome build
+on:
+  push:
+    branches: [deadbush15]
+    paths:
+      - 'deadbush15/badlands_filter_v7.cpp'
+      - '.github/workflows/deadbush-v7.yml'
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Obtain pinned 26.3 biome generator
+        run: |
+          git clone https://github.com/xpple/cubiomes.git /tmp/cubiomes
+          git -C /tmp/cubiomes checkout --detach b99f6e472018cab903a096697117aab9d9170a19
+      - name: Build C library and V7 checker
+        run: |
+          cmake -S /tmp/cubiomes -B /tmp/cubiomes/build -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS_RELEASE="-O3 -DNDEBUG -fwrapv"
+          cmake --build /tmp/cubiomes/build --target cubiomes_static --parallel 4
+          g++ -O3 -std=c++20 -fwrapv -I /tmp/cubiomes deadbush15/badlands_filter_v7.cpp /tmp/cubiomes/build/libcubiomes_static.a -lm -o /tmp/deadbush15_v7
+      - name: Published-seed biome calibration
+        run: /tmp/deadbush15_v7 --self-test
