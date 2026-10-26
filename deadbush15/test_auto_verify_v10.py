@@ -34,6 +34,26 @@ def run():
         remaining,_=candidates(infile,15,12,3,completed_keys(outfile))
         assert [seed for seed,_ in remaining]==[114006365]
 
+        # Old V10 output files must survive a V11 schema upgrade: no column
+        # shifts, previous verification results remain readable after append.
+        old_columns = list(columns) + ["world_verification","actual_same_y","actual_badlands_same_y"]
+        with outfile.open("w",newline="") as f:
+            writer=csv.DictWriter(f,fieldnames=old_columns)
+            writer.writeheader()
+            writer.writerow({**rows[1],"world_verification":"NOT_VERIFIED",
+                             "actual_same_y":1,"actual_badlands_same_y":1})
+        write_row(outfile,columns,{**rows[2],"world_verification":"NOT_VERIFIED",
+                                   "actual_same_y":2,"actual_badlands_same_y":2,
+                                   "actual_world_best_run":3})
+        with outfile.open(newline="") as f:
+            upgraded=list(csv.DictReader(f))
+        assert len(upgraded)==2, upgraded
+        assert upgraded[0]["seed_signed"]==rows[1]["seed_signed"]
+        assert upgraded[0]["actual_world_best_run"]==""
+        assert upgraded[1]["seed_signed"]==rows[2]["seed_signed"]
+        assert upgraded[1]["actual_world_best_run"]=="3"
+        print("PASS: old V10 verification CSV migrates without losing seed results")
+
     # A predicted 17-row with only its middle 15 bushes is STILL a true 15-row.
     class FakeActualWorld:
         def dead_bush_y(self,x,z):
