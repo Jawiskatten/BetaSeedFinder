@@ -123,7 +123,7 @@ static void appendCheckpoint(const std::string &path,const std::string &signatur
     std::ofstream f(path,std::ios::app);
     if(!f)throw std::runtime_error("cannot write checkpoint: "+path);
     const std::string payload="D15V2 "+signature+" "+std::to_string(offset);
-    f<<payload<<' '<<hashString(payload)<<'\n';
+    f<<'\n'<<payload<<' '<<hashString(payload)<<'\n';
     f.flush();
     if(!f)throw std::runtime_error("checkpoint write failed: "+path);
 }
@@ -237,6 +237,14 @@ int main(int argc,char **argv) {
                 }
                 if(fastHit.run!=brute.run)okay=false;
             }
+            RegionGrid horizontal(4,3,1);
+            for(int x=59;x<78;x++)horizontal.put(horizontal.x0+x,horizontal.z0+10);
+            Hit hb=horizontal.best(false);
+            if(hb.run!=19||hb.dx!=1||hb.x!=horizontal.x0+59)okay=false;
+            RegionGrid vertical(4,3,1);
+            for(int z=59;z<80;z++)vertical.put(vertical.x0+12,vertical.z0+z);
+            Hit vb=vertical.best(false);
+            if(vb.run!=21||vb.dz!=1||vb.z!=vertical.z0+59)okay=false;
             std::cout<<(okay?"PASS":"FAIL")<<" region bitset, word boundaries and arbitrary chunk equivalence\n";
             return okay?0:1;
         }
