@@ -32,7 +32,7 @@ Write-Host "Running actual 26.3 worldgen with NO approximate-terrain rejection..
 Write-Host "Each world is read for ALL generated dead-bush rows, even off the guessed line."
 Write-Host "Already completed rows in v10_verified.csv are automatically skipped."
 Write-Host "Manually rejected seeds skipped: $ExcludeSeeds"
-$args = @(
+$verifyArgs = @(
     '--csv', $ranked, '--output', 'v10_verified.csv',
     '--download-server', '--accept-eula',
     '--min-run', [string]$MinRun, '--min-strict', '0',
@@ -40,7 +40,7 @@ $args = @(
     '--exclude-seeds', $ExcludeSeeds,
     '--target', '15'
 )
-& py -3 auto_verify_v10.py @args
+& py -3 auto_verify_v10.py @verifyArgs
 if ($LASTEXITCODE -ne 0) { throw "Actual-world verification failed, exit $LASTEXITCODE" }
 Write-Host ""
 Write-Host "Actual generated-world results:"
