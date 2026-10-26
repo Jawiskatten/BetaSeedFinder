@@ -16,7 +16,7 @@ It queries the `mapApproxHeight` API of the **same pinned xpple/cubiomes Minecra
 
 ## Build in PowerShell
 
-    cd C:\Users\ASUS\Deadbush15\deadbush15
+    cd D:\Yes\Deadbush15\deadbush15
     git pull origin deadbush15
     powershell -ExecutionPolicy Bypass -File .\build_v9.ps1
 

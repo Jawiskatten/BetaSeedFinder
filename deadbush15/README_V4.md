@@ -16,7 +16,7 @@
 Requires Git, MSYS2 UCRT64 GCC, and OpenCL support from AMD Adrenalin driver.
 
 ```powershell
-cd C:\Users\ASUS\Deadbush15\deadbush15
+cd D:\Yes\Deadbush15\deadbush15
 git pull origin deadbush15
 $env:PATH = "C:\msys64\ucrt64\bin;$env:PATH"
 g++ -O3 -march=native -std=c++20 -pthread deadbush15_v4.cpp -o deadbush15_v4.exe

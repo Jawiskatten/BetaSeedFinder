@@ -6,7 +6,7 @@ V7 is a native biome-prediction stage after the V4 GPU scanner. It uses xpple/cu
 
 ## Build on Windows (PowerShell)
 
-    cd C:\Users\ASUS\Deadbush15\deadbush15
+    cd D:\Yes\Deadbush15\deadbush15
     git pull origin deadbush15
     powershell -ExecutionPolicy Bypass -File .\build_v7.ps1
 

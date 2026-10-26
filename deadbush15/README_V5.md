@@ -20,7 +20,7 @@ The Python verifier launches **official, unmodified Mojang 26.3 server.jar** sep
 ## Start from your existing PowerShell folder
 
 ```powershell
-cd C:\Users\ASUS\Deadbush15\deadbush15
+cd D:\Yes\Deadbush15\deadbush15
 git pull origin deadbush15
 $env:PATH = "C:\msys64\ucrt64\bin;$env:PATH"
 g++ -O3 -march=native -std=c++20 -pthread deadbush15_v5.cpp -o deadbush15_v5.exe

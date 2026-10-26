@@ -8,7 +8,7 @@ V8/V9 guessed terrain and led to many false positives. V10 **does not estimate t
 
 ## One-command PowerShell workflow
 
-Run from `C:\Users\ASUS\Deadbush15\deadbush15`:
+Run from `D:\Yes\Deadbush15\deadbush15`:
 
     git pull origin deadbush15
     py -3 test_auto_verify_v10.py
