@@ -3,8 +3,8 @@
 import csv
 import tempfile
 from pathlib import Path
-from auto_verify_v10 import (candidates, completed_keys, main, server_properties,
-                             target_chunks, write_row)
+from auto_verify_v10 import (candidates, completed_keys, locate_best_actual_row,
+                             main, server_properties, target_chunks, write_row)
 
 def run():
     with tempfile.TemporaryDirectory() as d:
@@ -33,6 +33,17 @@ def run():
         assert len(completed_keys(outfile))==1
         remaining,_=candidates(infile,15,12,3,completed_keys(outfile))
         assert [seed for seed,_ in remaining]==[114006365]
+
+    # A predicted 17-row with only its middle 15 bushes is STILL a true 15-row.
+    class FakeActualWorld:
+        def dead_bush_y(self,x,z):
+            return {76} if 1001 <= x <= 1015 and z == -12 else set()
+        def biome_at(self,x,y,z):
+            return "minecraft:badlands"
+    size,x,z,y=locate_best_actual_row(FakeActualWorld(),
+                 {"start_x":"1000","start_z":"-12","dx":"1","dz":"0","run":"17"})
+    assert (size,x,z,y)==(15,1001,-12,76), (size,x,z,y)
+    print("PASS: real 15-subrow detected inside 17 predicted locations")
     print("PASS: V10 seed prioritization, chunk planning, resume, dry-run, isolated server configuration")
 
 if __name__=="__main__":
