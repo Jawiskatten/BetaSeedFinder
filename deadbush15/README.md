@@ -1,3 +1,39 @@
+# Deadbush15 v2: multi-chunk scanner (2026-10-26)
+
+The recommended **v2** finder is `deadbush15_v2.cpp`. The original `deadbush15.cpp` is retained for reproducing earlier runs.
+
+## Windows PowerShell: update, compile, test
+
+```powershell
+cd C:\Users\ASUS\Deadbush15\deadbush15
+git pull origin deadbush15
+$env:PATH = "C:\msys64\ucrt64\bin;$env:PATH"
+g++ -O3 -march=native -std=c++20 -pthread deadbush15_v2.cpp -o deadbush15_v2.exe
+.\deadbush15_v2.exe --self-test
+```
+
+Alternatively, run `build_v2_windows.bat` from Explorer / CMD. It adds the UCRT64 GCC location to PATH.
+
+## Broader scan: 4 × 4 center chunks plus radius-1 border
+
+```powershell
+.\deadbush15_v2.exe --search --start 0 --count 5000000 --threads 8 --region-width 4 --region-height 4 --radius 1 --spread-span 1000000 --mode flat --report 10 --target 15 --checkpoint v2_progress.log --resume --output v2_candidates.csv
+```
+
+Run the exact same command again after interruption to resume from the last **contiguously completed** checkpoint. It only checkpoints every ~5 seconds, so a short portion of already searched seeds may be retried and corresponding candidate rows duplicated after a crash. At natural completion, it checkpoints the whole range. The run parameters, CSV path, and checkpoint path should stay unchanged when resuming. To start a **new** range, change `--start`, `--checkpoint`, and `--output`.
+
+- `--region-width 4 --region-height 4`: covers one 4-by-4 region of center chunks per seed; with `--radius 1`, generates its union with a one-chunk border: **6 × 6 = 36 decoration chunks per seed**. It simulates each chunk's decoration stream only once and counts rows across the union.
+- `--spread-span 1000000`: deterministically chooses a center chunk somewhere within ±1,000,000 chunks on both axes, based on the world seed. This samples **one region per world seed**, NOT the entire world. Use `--spread-span 0 --chunk-x 10000 --chunk-z -10000` for fixed chunks.
+- `--region-width 1 --region-height 1 --spread-span 0 --chunk-x 0 --chunk-z 0`: behaves like the original fixed-origin scanner and uses its optimized 64-bit grid path.
+- `--mode flat`: assumes a flat surface and ignores attempts with vertical offset; `--mode xz` ignores Y and may produce many false positives.
+- Default searches X and Z straight rows; `--diagonal` includes diagonals (extra cost).
+
+**Correctness:** v2 passes both published 12/14-bush RNG reference checks, compares single-center runs with v1 at arbitrary coordinates, and checks larger-region bit scanning against a brute-force oracle. This is still NOT Minecraft biome, terrain, or final-block verification. **No 15-row world has been verified or found.** A high-scoring CSV entry is only a decoration pattern candidate.
+
+**Performance:** local 250k-seed test (8 CPU threads, 4 × 4 region, radius 1, spread 1M) processed ~77,600 world seeds/s on the test machine. Do not compare its raw seeds/s directly with the 1 × 1 origin test; 36 vs 9 decoration chunks are simulated per world seed and every chunk is used once. Your CPU performance will differ.
+
+---
+
 # Deadbush15 — Minecraft Java Edition 26.3
 
 **Goal:** Find a naturally generated **15-block straight line of `minecraft:dead_bush`** in badlands.
