@@ -29,13 +29,16 @@ from pathlib import Path
 
 from verify_normal_v9 import examine
 from verify_world_v4 import World
+from scan_real_world_v11 import scan_world
 
 VERSION = "26.3"
 MANIFEST_URL = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
 FINISHED = {"BLOCKS_MATCH_BADLANDS", "WRONG_BIOME", "NOT_VERIFIED"}
 OUTPUT_FIELDS = ("world_verification", "actual_same_y", "actual_badlands_same_y",
                  "confirmed_y", "actual_best_x", "actual_best_z", "actual_best_y",
-                 "v10_seconds", "v10_error")
+                 "v10_seconds", "v10_error", "actual_world_best_run",
+                 "actual_world_best_x", "actual_world_best_y", "actual_world_best_z",
+                 "actual_world_best_dx", "actual_world_best_dz")
 
 
 def read_json(url):
@@ -340,6 +343,10 @@ def verify_world(folder, seed, rows):
     modern = folder / "world/dimensions/minecraft/overworld"
     world = World(modern if (modern / "region").is_dir() else folder / "world",
                   "minecraft:dead_bush")
+    # Scan *all* generated chunks for actual same-Y rows. This may find
+    # a record outside the RNG candidate line, including across chunk edges.
+    full_scan = scan_world(folder / "world", min_run=2, top=1, require_badlands=True)
+    best_world = full_scan["rows"][0] if full_scan["rows"] else {}
     results = []
     for row in rows:
         status,any_count,bad_count,levels = examine(world,row)
@@ -348,7 +355,13 @@ def verify_world(folder, seed, rows):
             raise RuntimeError(f"Internal verifier disagreement: row={row} best={best}, badlands={bad_count}")
         results.append({**row,"world_verification":status,"actual_same_y":any_count,
                         "actual_badlands_same_y":bad_count,"confirmed_y":levels,
-                        "actual_best_x":bx,"actual_best_z":bz,"actual_best_y":by})
+                        "actual_best_x":bx,"actual_best_z":bz,"actual_best_y":by,
+                        "actual_world_best_run":best_world.get("run",0),
+                        "actual_world_best_x":best_world.get("start_x",""),
+                        "actual_world_best_y":best_world.get("start_y",""),
+                        "actual_world_best_z":best_world.get("start_z",""),
+                        "actual_world_best_dx":best_world.get("dx",""),
+                        "actual_world_best_dz":best_world.get("dz","")})
     return results
 
 
@@ -419,10 +432,11 @@ def main(argv=None):
                     value = result["actual_badlands_same_y"]
                     print(f"  {status}: predicted={result['run']} actual_badlands={value} "
                           f"x={result['start_x']} z={result['start_z']} "
-                          f"actual_start=({result['actual_best_x']},{result['actual_best_y']},{result['actual_best_z']})",flush=True)
+                          f"actual_start=({result['actual_best_x']},{result['actual_best_y']},{result['actual_best_z']}) "
+                          f"best_anywhere_in_saved_world={result['actual_world_best_run']}",flush=True)
                     # A genuine 15-bush sub-row inside a predicted 17-bush
                     # span still beats the record even if the full 17 is false.
-                    found |= (value>=args.target)
+                    found |= (max(value, int(result["actual_world_best_run"]))>=args.target)
                 if found:
                     print(f"ACTUAL SAVED-BLOCK HIT >= {args.target}: keeping world at {scratch}",flush=True)
                     print("Inspect world integrity and natural origin before any record claim.",flush=True)
@@ -437,7 +451,8 @@ def main(argv=None):
             finally:
                 if not args.keep_worlds and not any(
                     # Preserve worlds explicitly if they produce a record.
-                    int(line.get("actual_badlands_same_y") or 0)>=args.target
+                    max(int(line.get("actual_badlands_same_y") or 0),
+                        int(line.get("actual_world_best_run") or 0))>=args.target
                     for line in (locals().get("results") or [])):
                     shutil.rmtree(scratch,ignore_errors=True)
                 # Make sure stale data from one seed cannot influence the next.
