@@ -5,6 +5,9 @@ on:
     paths:
       - 'deadbush15/badlands_filter_v7.cpp'
       - 'deadbush15/terrain_rank_v9.cpp'
+      - 'deadbush15/verify_world_v4.py'
+      - 'deadbush15/verify_normal_v9.py'
+      - 'deadbush15/test_palette_v9.py'
       - '.github/workflows/deadbush-v7.yml'
   workflow_dispatch:
 jobs:
@@ -20,10 +23,12 @@ jobs:
         run: |
           cmake -S /tmp/cubiomes -B /tmp/cubiomes/build -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS_RELEASE="-O3 -DNDEBUG -fwrapv"
           cmake --build /tmp/cubiomes/build --target cubiomes_static --parallel 4
-          g++ -O3 -std=c++20 -fwrapv -I /tmp/cubiomes deadbush15/badlands_filter_v7.cpp /tmp/cubiomes/build/libcubiomes_static.a -lm -o /tmp/deadbush15_v7
+          g++ -O3 -std=c++17 -fwrapv -I /tmp/cubiomes deadbush15/badlands_filter_v7.cpp /tmp/cubiomes/build/libcubiomes_static.a -lm -o /tmp/deadbush15_v7
       - name: Published-seed biome calibration
         run: /tmp/deadbush15_v7 --self-test
       - name: Build and smoke-test V9 terrain ranker
         run: |
           g++ -O3 -std=c++17 -fwrapv -I /tmp/cubiomes deadbush15/terrain_rank_v9.cpp /tmp/cubiomes/build/libcubiomes_static.a -lm -o /tmp/deadbush15_v9
           /tmp/deadbush15_v9 --self-test
+      - name: Verify Java 26.3 palette backward compatibility
+        run: python3 deadbush15/test_palette_v9.py
