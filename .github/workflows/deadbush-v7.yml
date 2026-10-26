@@ -10,6 +10,8 @@ on:
       - 'deadbush15/test_palette_v9.py'
       - 'deadbush15/auto_verify_v10.py'
       - 'deadbush15/test_auto_verify_v10.py'
+      - 'deadbush15/scan_real_world_v11.py'
+      - 'deadbush15/test_scan_real_world_v11.py'
       - '.github/workflows/deadbush-v7.yml'
   workflow_dispatch:
 jobs:
@@ -38,3 +40,5 @@ jobs:
         run: |
           python3 -m py_compile deadbush15/auto_verify_v10.py deadbush15/verify_normal_v9.py
           python3 deadbush15/test_auto_verify_v10.py
+      - name: Validate full-world block scanner at 14 and 15
+        run: python3 deadbush15/test_scan_real_world_v11.py
