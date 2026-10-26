@@ -34,7 +34,8 @@ VERSION = "26.3"
 MANIFEST_URL = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
 FINISHED = {"BLOCKS_MATCH_BADLANDS", "WRONG_BIOME", "NOT_VERIFIED"}
 OUTPUT_FIELDS = ("world_verification", "actual_same_y", "actual_badlands_same_y",
-                 "confirmed_y", "v10_seconds", "v10_error")
+                 "confirmed_y", "actual_best_x", "actual_best_z", "actual_best_y",
+                 "v10_seconds", "v10_error")
 
 
 def read_json(url):
@@ -312,6 +313,27 @@ def run_world(server_jar, java, seed, rows, workdir, boot_timeout, gen_timeout, 
     return success, time.monotonic()-started
 
 
+def locate_best_actual_row(world, row):
+    """Locate real same-height Badlands sub-row, including its true X/Z/Y start."""
+    x,z,dx,dz,n = (int(row[k]) for k in ("start_x","start_z","dx","dz","run"))
+    positions = [(x+i*dx,z+i*dz) for i in range(n)]
+    found = [world.dead_bush_y(px,pz) for px,pz in positions]
+    if any(item is None for item in found):
+        return 0,"","",""
+    from verify_normal_v9 import BADLANDS
+    best=(0,"","","")
+    levels = set().union(*found)
+    for y in levels:
+        consecutive=0
+        for i,((px,pz),states) in enumerate(zip(positions,found)):
+            good = y in states and world.biome_at(px,y,pz) in BADLANDS
+            consecutive = consecutive+1 if good else 0
+            if consecutive>best[0]:
+                start_x,start_z=positions[i-consecutive+1]
+                best=(consecutive,start_x,start_z,y)
+    return best
+
+
 def verify_world(folder, seed, rows):
     # 26.3 may store overworld under new dimension path. Read saved chunk blocks,
     # not cubiomes or server console predictions.
@@ -321,8 +343,12 @@ def verify_world(folder, seed, rows):
     results = []
     for row in rows:
         status,any_count,bad_count,levels = examine(world,row)
+        best,bx,bz,by = locate_best_actual_row(world,row)
+        if best != bad_count:
+            raise RuntimeError(f"Internal verifier disagreement: row={row} best={best}, badlands={bad_count}")
         results.append({**row,"world_verification":status,"actual_same_y":any_count,
-                        "actual_badlands_same_y":bad_count,"confirmed_y":levels})
+                        "actual_badlands_same_y":bad_count,"confirmed_y":levels,
+                        "actual_best_x":bx,"actual_best_z":bz,"actual_best_y":by})
     return results
 
 
@@ -392,8 +418,11 @@ def main(argv=None):
                     status = result["world_verification"]
                     value = result["actual_badlands_same_y"]
                     print(f"  {status}: predicted={result['run']} actual_badlands={value} "
-                          f"x={result['start_x']} z={result['start_z']}",flush=True)
-                    found |= (status=="BLOCKS_MATCH_BADLANDS" and value>=args.target)
+                          f"x={result['start_x']} z={result['start_z']} "
+                          f"actual_start=({result['actual_best_x']},{result['actual_best_y']},{result['actual_best_z']})",flush=True)
+                    # A genuine 15-bush sub-row inside a predicted 17-bush
+                    # span still beats the record even if the full 17 is false.
+                    found |= (value>=args.target)
                 if found:
                     print(f"ACTUAL SAVED-BLOCK HIT >= {args.target}: keeping world at {scratch}",flush=True)
                     print("Inspect world integrity and natural origin before any record claim.",flush=True)
@@ -408,8 +437,7 @@ def main(argv=None):
             finally:
                 if not args.keep_worlds and not any(
                     # Preserve worlds explicitly if they produce a record.
-                    line.get("world_verification")=="BLOCKS_MATCH_BADLANDS"
-                    and int(line.get("actual_badlands_same_y") or 0)>=args.target
+                    int(line.get("actual_badlands_same_y") or 0)>=args.target
                     for line in (locals().get("results") or [])):
                     shutil.rmtree(scratch,ignore_errors=True)
                 # Make sure stale data from one seed cannot influence the next.
