@@ -1,0 +1,21 @@
+# Codex V15 mission — coherent vanilla placement, not inflated branch unions
+
+Continue from V14 commit 8d7761b in D:\Yes\Deadbush15 (branch deadbush15). The V14 Java worldgen registry/bootstrap, global decoration step 9/index 75, RNG, and GPU parity are useful. Do not migrate drives or restart research. Implement code, don't merely plan.
+
+## Critical diagnosis
+
+The V14 GPU unions X/Z destinations from **mutually incompatible biome-acceptance traces**. The published 14-bush line scored 86, and 500/500 sampled locations passed the upper bound: 0% rejection. At 4,264 locations/sec V14 is dramatically slower than V13's ~4.22M locations/sec. Neither metric proves exactness or usefulness. No big brute-force run on the current union.
+
+## Focused implementation: resolve actual per-base decisions
+
+1. Inspect 26.3 vanilla `patch_dead_bush_badlands` placement chain and V14 Java `VanillaTerrainEngine`. Use its persistent 26.3 `NoiseBasedChunkGenerator`/registry state as a reusable oracle for **per-base height + biome identity** during `HeightmapPlacement -> BiomeFilter`. The initial 20 `InSquare` positions are sampled before any per-base offset draws. Query their actual input Y and biome at that Y; identify missing worldgen state that prevents parity with a full vanilla chunk. Explicitly distinguish `getBaseHeight(WORLD_SURFACE_WG)` / noise biome from the post-previous-feature decoration state; do not claim exactness if they differ.
+2. Create a deterministic **one coherent RNG trace** for each chunk from its 20 base accept/reject flags; advance RNG for the four offset placements only on accepted bases. Preserve X, Y, Z offsets and base positions, not only XZ. Use one trace, not a union of contradictory branches. If exact acceptance cannot be inferred for a base, represent it as **UNKNOWN** and retain sound conditional states without merging mutually incompatible histories into one alleged candidate. Never silently exclude a published reference due to an approximation.
+3. Compare against **independent actual vanilla chunk data** for the published 14-bush reference (seed -6825794747614541757, start X=16530130 Z=-25619539, +X) and a small number of saved negatives. Assert both the RNG feature index and the **same coherent trace** needed for actual placements. When a candidate fails, log the exact first failing base/biome/height/placement instead of continuing blindly.
+4. Add a selective stage using strict biome/height constraints *before* slow candidate verification; quantify rejection fraction on both positives and negatives. Prefer a correct CPU/Java baseline first. GPU acceleration may be reintroduced only once equivalent coherent trace logic exists. Do not optimize the incorrect V14 branch union.
+5. Move toward **actual dead-bush placement survival**: at each destination check sampled vanilla heightmap, resulting Y, air, supporting block, preceding decorations/surface rules, and coordinate boundaries. For any unresolved post-decoration interactions, label CANDIDATE_UNVERIFIED and document the precise missing implementation. Preserve V11 saved-world verifier as an independent oracle, never a server-per-seed hot path.
+
+## Deliverables and constraints
+
+A working V15 coherent-trace generator / filtering pipeline for new seed and chunk coordinates, source plus PowerShell build/search commands, corrected output meaning, and a short README_V15.md. Continue all work under D:\Yes\Deadbush15, preserve data/checkpoints and C: backup, commit and push to deadbush15. Do one targeted Java-vs-native correctness comparison and one meaningful benchmark, reporting actual throughput and rejection fraction. Don't rerun dozens of large scans or repeatedly create vanilla servers. Avoid endless testing; implement the needed algorithm.
+
+**Definition of done:** the search no longer treats an incompatible branch union as a real placement candidate; the 14-bush reference is not lost; a useful, quantified rejection stage exists; and remaining exact-worldgen gaps are documented. If fully exact post-decoration placement remains infeasible, provide real working partial code and never fabricate a 15-bush discovery.
