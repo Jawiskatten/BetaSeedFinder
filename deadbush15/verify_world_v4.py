@@ -157,6 +157,22 @@ class World:
             return str(palette[palette_idx]) if palette_idx < len(palette) else None
         return None
 
+    @staticmethod
+    def block_palette_id(entry):
+        """Normalize Java block palettes through 26.3.
+
+        Legacy chunks store {Name: ...}, 26.3 stores {id: ...},
+        default states may be strings, or {"": "minecraft:block"}.
+        """
+        if isinstance(entry, str):
+            return entry
+        if isinstance(entry, dict):
+            for key in ('id', 'Name', 'name', ''):
+                value = entry.get(key)
+                if isinstance(value, str):
+                    return value
+        raise NBTError(f'Unsupported block-state palette entry: {repr(entry)[:160]}')
+
     def dead_bush_y(self, x, z):
         cx, cz = x // 16, z // 16
         chunk = self.chunk(cx, cz)
@@ -169,7 +185,7 @@ class World:
             palette = bs.get('palette', bs.get('Palette', [])) if isinstance(bs, dict) else []
             if not palette:
                 continue
-            names = [entry.get('Name', entry.get('name', '')) for entry in palette]
+            names = [self.block_palette_id(entry) for entry in palette]
             indices = [i for i, name in enumerate(names) if name == self.block]
             if not indices: continue
             sy = int(section.get('Y', 0))
