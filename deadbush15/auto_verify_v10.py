@@ -15,6 +15,7 @@ import json
 import os
 import queue
 import re
+import socket
 import shutil
 import subprocess
 import sys
@@ -116,13 +117,15 @@ def get_java(configured):
                        "or install Java 25; the launcher-bundled Java is also searched.")
 
 
-def candidates(input_path, min_run, min_strict, max_seeds, completed):
+def candidates(input_path, min_run, min_strict, max_seeds, completed, excluded=frozenset()):
     with input_path.open(newline="", encoding="utf-8-sig") as f:
         rows = list(csv.DictReader(f))
     if not rows or not {"seed_signed","run","start_x","start_z","dx","dz"}.issubset(rows[0]):
         raise RuntimeError("CSV must have seed_signed,run,start_x,start_z,dx,dz columns")
     groups = defaultdict(list)
     for row in rows:
+        if int(row["seed_signed"]) in excluded:
+            continue
         length = int(row["run"])
         strict = int(row.get("approx_strict_run") or 0)
         if length < min_run or strict < min_strict:
@@ -182,13 +185,14 @@ def target_chunks(rows):
     return sorted(chunks)
 
 
-def server_properties(seed):
+def server_properties(seed, port=0):
     return "\n".join([
         f"level-seed={seed}",
         "level-name=world",
         "level-type=minecraft:normal",
         "server-ip=127.0.0.1",
-        "server-port=0",
+        f"server-port={port}",
+        "management-server-enabled=false",
         "online-mode=false",
         "white-list=true",
         "max-players=1",
@@ -219,7 +223,12 @@ def run_world(server_jar, java, seed, rows, workdir, boot_timeout, gen_timeout, 
     """Server console commands generated and executed without any connected players."""
     workdir.mkdir(parents=True, exist_ok=False)
     (workdir / "eula.txt").write_text("eula=true\n",encoding="utf-8")
-    (workdir / "server.properties").write_text(server_properties(seed),encoding="utf-8")
+    # Bind to loopback on a currently-unused port; never expose a test server
+    # to the local network or collide with someone's regular Minecraft server.
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    (workdir / "server.properties").write_text(server_properties(seed,port),encoding="utf-8")
     logs = []
     messages = queue.Queue()
     command = [java, "-Xms512M", f"-Xmx{heap_gb}G", "-jar", str(server_jar.resolve()), "nogui"]
@@ -327,6 +336,7 @@ def main(argv=None):
     parser.add_argument("--max-seeds",type=int,default=3,
                         help="Limit world creations; pass a larger value if desired")
     parser.add_argument("--target",type=int,default=15)
+    parser.add_argument("--exclude-seeds",default="",help="Comma-separated seeds already checked manually")
     parser.add_argument("--java",default=None,help="Path to Java 25+ executable, auto-detected otherwise")
     parser.add_argument("--server-jar",type=Path,default=Path(".v10_runtime/server_26.3.jar"))
     parser.add_argument("--download-server",action="store_true",
@@ -345,8 +355,12 @@ def main(argv=None):
         parser.error("Invalid --max-seeds, --heap-gb or --target")
     if args.boot_timeout < 20 or args.gen_timeout < 20:
         parser.error("Timeouts must be at least 20 seconds")
+    try:
+        excluded = {int(v.strip()) for v in args.exclude_seeds.split(',') if v.strip()}
+    except ValueError:
+        parser.error("--exclude-seeds must be comma-separated integers")
     selected,columns = candidates(args.csv,args.min_run,args.min_strict,args.max_seeds,
-                                  completed_keys(args.output))
+                                  completed_keys(args.output), excluded)
     print(f"Selected {len(selected)} distinct unverified world seeds from {args.csv}.",flush=True)
     for seed,rows in selected:
         print(f"  seed={seed} rows={len(rows)} strict={max(int(r.get('approx_strict_run') or 0) for r in rows)} "
