@@ -17,7 +17,21 @@ BADLANDS = {"minecraft:badlands", "minecraft:wooded_badlands", "minecraft:eroded
 def world_seed_and_preset(folder):
     settings, source_file = find_worldgen(folder)
     if settings is None:
-        raise RuntimeError('Could not find world generation settings (26.3 world?)')
+        import single_badlands_v6
+        probes = []
+        for file in (folder / 'data/minecraft/world_gen_settings.dat', folder / 'level.dat'):
+            if not file.is_file():
+                probes.append(f'{file.relative_to(folder)}: MISSING')
+                continue
+            try:
+                root = single_badlands_v6.nbt_file(file)
+                keys = ','.join(str(k) for k in root.keys())
+                nested = root.get('data', root.get('Data', {}))
+                nested_keys = ','.join(str(k) for k in nested.keys()) if isinstance(nested, dict) else 'not a compound'
+                probes.append(f'{file.relative_to(folder)}: top-level=[{keys}]; data/Data=[{nested_keys}]')
+            except Exception as exc:
+                probes.append(f'{file.relative_to(folder)}: parse error: {exc}')
+        raise RuntimeError('Could not locate overworld world-generation settings. ' + '; '.join(probes))
     dims = settings.get('dimensions', settings.get('Dimensions', {}))
     over = dims.get('minecraft:overworld', {})
     gen = over.get('generator', {}) if isinstance(over, dict) else {}
@@ -76,7 +90,11 @@ def main():
     w=new if (new.folder/'region').is_dir() else World(args.world,'minecraft:dead_bush')
     with args.csv.open(newline='',encoding='utf-8-sig') as f:
         rows=[r for r in csv.DictReader(f) if int(r['seed_signed'])==seed]
-    if not rows:raise RuntimeError(f'No candidate from {args.csv} matches save seed {seed}')
+    if not rows:
+        raise RuntimeError(f'No candidate from {args.csv} matches save seed {seed}. '
+                           'If test1 was created from a V8 candidate (such as 300136533 or 301572122), '
+                           'use v8_flat_s300000000_n2000000_l4_r7.shortlist.csv instead; '
+                           'v9_ranked.csv contains different candidate seeds.')
     print('Vanilla normal-world seed:',seed)
     results=[]
     for row in rows:
