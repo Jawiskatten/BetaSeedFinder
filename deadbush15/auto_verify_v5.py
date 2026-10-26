@@ -136,7 +136,7 @@ def all_row_chunks_full(world, x,z,dx,dz,n):
 def generate_one(server_jar, java, scratch, candidate, startup_timeout, chunk_timeout):
     seed=int(candidate['seed_signed']);x=int(candidate['start_x']);z=int(candidate['start_z'])
     dx=int(candidate['dx']);dz=int(candidate['dz']);run=int(candidate['run'])
-    scratch.mkdir(parents=True)
+    scratch.mkdir(parents=True, exist_ok=True)
     # Explicit accept-eula flag is checked in main before reaching here.
     (scratch/'eula.txt').write_text('eula=true\n', encoding='ascii')
     # Dedicated isolated world. No publicly reachable listener or remote console.
