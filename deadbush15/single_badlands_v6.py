@@ -30,14 +30,18 @@ def find_worldgen(world):
         if not file.is_file():
             continue
         obj = nbt_file(file)
+        # 26.1+ SavedData files use lowercase `data` (unlike legacy
+        # `level.dat` with uppercase `Data`). Unwrap only known metadata keys.
         choices = [obj]
-        if isinstance(obj.get("Data"), dict):
-            choices.append(obj["Data"])
         for o in choices:
-            if isinstance(o.get("WorldGenSettings"), dict):
-                choices.append(o["WorldGenSettings"])
-            if isinstance(o.get("world_gen_settings"), dict):
-                choices.append(o["world_gen_settings"])
+            if len(choices) > 20:
+                break
+            if not isinstance(o, dict):
+                continue
+            for key in ("data", "Data", "WorldGenSettings", "world_gen_settings"):
+                child = o.get(key)
+                if isinstance(child, dict):
+                    choices.append(child)
         for o in choices:
             if not isinstance(o, dict):
                 continue
