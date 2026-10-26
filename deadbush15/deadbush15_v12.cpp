@@ -80,15 +80,23 @@ static bool supportsRow(const Row &r,int index) {
     }
     return true;
 }
-static bool validate(const Row&r){return r.n>=1&&r.n<=64&&((r.dx==1&&r.dz==0)||(r.dx==0&&r.dz==1));}
+static bool validate(const Row&r){return r.n>=1&&r.n<=94&&((r.dx==1&&r.dz==0)||(r.dx==0&&r.dz==1));}
+static uint64_t inputFingerprint(const std::string &path) {
+    std::ifstream f(path,std::ios::binary);if(!f)throw std::runtime_error("cannot hash input CSV");
+    uint64_t h=14695981039346656037ULL;char buffer[65536];
+    while(f){f.read(buffer,sizeof(buffer));std::streamsize n=f.gcount();
+        for(std::streamsize i=0;i<n;++i){h^=(unsigned char)buffer[i];h*=1099511628211ULL;}}
+    return h;
+}
 int main(int argc,char**argv) {
     try {
-        std::string input,output; int imin=75,imax=75; bool self=false,resume=false; uint64_t limit=UINT64_MAX;
+        std::string input,output; int imin=75,imax=75; bool self=false,resume=false,rngOnly=false; uint64_t limit=UINT64_MAX;
         for(int i=1;i<argc;++i){std::string a=argv[i];auto val=[&](){if(++i>=argc)throw std::runtime_error("missing value for "+a);return std::string(argv[i]);};
             if(a=="--input")input=val();else if(a=="--output")output=val();
+            else if(a=="--rng-only")rngOnly=true;
             else if(a=="--index"){imin=imax=std::stoi(val());}else if(a=="--index-range"){imin=std::stoi(val());imax=std::stoi(val());}
             else if(a=="--limit")limit=std::stoull(val());else if(a=="--self-test")self=true;else if(a=="--resume")resume=true;
-            else if(a=="--help"){std::cout<<"--self-test | --input candidates.csv --output v12_upper_bound.csv [--index N | --index-range A B] [--limit N] [--resume]\n";return 0;}
+            else if(a=="--help"){std::cout<<"--self-test | --input candidates.csv --output v12_upper_bound.csv [--index N | --index-range A B] [--rng-only] [--limit N] [--resume]\n";return 0;}
             else throw std::runtime_error("unknown option "+a);
         }
         if(imin<0||imax<imin||imax>1024)throw std::runtime_error("index range must be 0..1024");
@@ -104,7 +112,7 @@ int main(int argc,char**argv) {
         if(std::filesystem::absolute(input)==std::filesystem::absolute(output))throw std::runtime_error("input and output paths must differ");
         std::ifstream in(input);if(!in)throw std::runtime_error("cannot open input");
         auto inpath=std::filesystem::absolute(input);
-        std::string meta=output+".meta", signature="D15V12\n"+inpath.string()+"\n"+std::to_string(std::filesystem::file_size(inpath))+"\n"+std::to_string(std::filesystem::last_write_time(inpath).time_since_epoch().count())+"\n"+std::to_string(imin)+"\n"+std::to_string(imax)+"\n";
+        std::string meta=output+".meta", signature="D15V12RNG\n"+inpath.string()+"\n"+std::to_string(std::filesystem::file_size(inpath))+"\n"+std::to_string(inputFingerprint(inpath.string()))+"\n"+std::to_string(imin)+"\n"+std::to_string(imax)+"\n"+std::to_string(rngOnly)+"\n";
         if(resume){std::ifstream mf(meta);std::string old((std::istreambuf_iterator<char>(mf)),{});if(!mf||old!=signature||!std::filesystem::exists(output))throw std::runtime_error("resume metadata mismatch or output missing");}
         else {std::ofstream mf(meta,std::ios::trunc);mf<<signature;if(!mf)throw std::runtime_error("cannot write resume metadata");}
         std::ofstream out(output,resume?std::ios::app:std::ios::trunc);if(!out)throw std::runtime_error("cannot open output");
@@ -117,8 +125,8 @@ int main(int argc,char**argv) {
         auto t0=std::chrono::steady_clock::now();uint64_t seen=0;
         while(rows<limit&&std::getline(in,line)){if(line.empty())continue;auto f=csv(line);if(f.size()!=h.size())continue;if(seen++<skip)continue;
             Row r{std::stoll(f[col["seed_signed"]]),std::stoi(f[col["start_x"]]),std::stoi(f[col["start_z"]]),std::stoi(f[col["dx"]]),std::stoi(f[col["dz"]]),std::stoi(f[col["run"]])};
-            if(!validate(r))continue;++rows;Generator g;setupGenerator(&g,MC_26_3,0);applySeed(&g,DIM_OVERWORLD,uint64_t(r.seed));bool biome=commonBadlandsY(g,r);int found=-1;if(biome)for(int k=imin;k<=imax;++k)if(supportsRow(r,k)){found=k;break;}
-            if(found>=0)++possible;out<<line<<','<<(biome?"POSSIBLE":"NO_COMMON_BADLANDS_Y")<<','<<(found>=0?"POSSIBLE":"EXCLUDED_BY_RNG_XZ")<<','<<(found>=0?std::to_string(found):"")<<",BADLANDS_AND_BIOME_BRANCH_UPPER_BOUNDS\n";out.flush();
+            if(!validate(r))continue;++rows;Generator g;setupGenerator(&g,MC_26_3,0);applySeed(&g,DIM_OVERWORLD,uint64_t(r.seed));bool biome=rngOnly||commonBadlandsY(g,r);int found=-1;if(biome)for(int k=imin;k<=imax;++k)if(supportsRow(r,k)){found=k;break;}
+            if(found>=0)++possible;out<<line<<','<<(rngOnly?"NOT_EVALUATED_FINAL_XZ_NOT_NECESSARY":(biome?"POSSIBLE":"NO_COMMON_BADLANDS_Y"))<<','<<(found>=0?"POSSIBLE":"EXCLUDED_BY_RNG_XZ")<<','<<(found>=0?std::to_string(found):"")<<','<<(rngOnly?"RNG_XZ_BRANCH_UNION_ONLY":"BADLANDS_AND_BIOME_BRANCH_UPPER_BOUNDS")<<'\n';out.flush();
             if(rows%100==0)std::cerr<<"Checked "<<rows<<" candidates; possible "<<possible<<"\r";
         }
         double sec=std::chrono::duration<double>(std::chrono::steady_clock::now()-t0).count();
