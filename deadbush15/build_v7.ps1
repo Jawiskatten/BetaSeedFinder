@@ -45,7 +45,9 @@ if ($LASTEXITCODE -ne 0) { throw 'Cubiomes compilation failed' }
 
 $lib = Join-Path $build 'libcubiomes_static.a'
 if (!(Test-Path $lib)) { throw "Static archive absent at $lib" }
-& $gpp -O3 -std=c++20 -fwrapv -I $vendor (Join-Path $PSScriptRoot 'badlands_filter_v7.cpp') $lib -lm -o (Join-Path $PSScriptRoot 'badlands_filter_v7.exe')
+# Cubiomes rng.h declares global lerp(), which conflicts with std::lerp in C++20.
+# This filter uses only C++17 features, so compile against the C API as C++17.
+& $gpp -O3 -std=c++17 -fwrapv -I $vendor (Join-Path $PSScriptRoot 'badlands_filter_v7.cpp') $lib -lm -o (Join-Path $PSScriptRoot 'badlands_filter_v7.exe')
 if ($LASTEXITCODE -ne 0) { throw 'Biome filter compilation failed' }
 
 & (Join-Path $PSScriptRoot 'badlands_filter_v7.exe') --self-test
